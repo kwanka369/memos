@@ -11,6 +11,7 @@ Messages can start with a prefix to route them into a specific tag:
     !meeting  -> #meeting
     !podcast  -> #podcast
     !todo     -> #todo
+    !github   -> #github
 
 Anything without a recognized prefix is filed under #inbox.
 
@@ -18,7 +19,9 @@ Photos, documents, voice notes, audio, and video notes are downloaded from
 Telegram and attached to the created memo via the Memos attachments API.
 
 YouTube links are enriched with the video title and channel name (via the
-public oEmbed API) prepended to the memo content.
+public oEmbed API), and GitHub repo links are enriched with the repo
+description, primary language, and star count (via the public GitHub API),
+both prepended to the memo content.
 
 Run:
     pip install -r requirements.txt
@@ -49,6 +52,7 @@ PREFIX_TAGS = {
     "!meeting": "meeting",
     "!podcast": "podcast",
     "!todo": "todo",
+    "!github": "github",
 }
 
 
@@ -105,6 +109,47 @@ def enrich_with_youtube_metadata(content: str) -> str:
     if not title:
         return content
     header = f"🎵 {title} — {author}" if author else f"🎵 {title}"
+    return f"{header}\n{content}"
+
+
+GITHUB_REPO_URL_RE = re.compile(
+    r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git|/)?(?:\s|$)"
+)
+
+
+def get_github_repo_info(owner: str, repo: str) -> dict | None:
+    """Fetch basic repo metadata from the public GitHub API (unauthenticated)."""
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}",
+            headers={"Accept": "application/vnd.github+json"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+    except requests.RequestException:
+        return None
+
+
+def enrich_with_github_metadata(content: str) -> str:
+    match = GITHUB_REPO_URL_RE.search(content)
+    if not match:
+        return content
+    owner, repo = match.group(1), match.group(2)
+    info = get_github_repo_info(owner, repo)
+    if not info:
+        return content
+    description = info.get("description") or ""
+    stars = info.get("stargazers_count", 0)
+    language = info.get("language") or ""
+    full_name = info.get("full_name", f"{owner}/{repo}")
+    details = " · ".join(filter(None, [language, f"⭐ {stars}"]))
+    header = f"🐙 {full_name}"
+    if description:
+        header += f" — {description}"
+    if details:
+        header += f" ({details})"
     return f"{header}\n{content}"
 
 
@@ -186,6 +231,7 @@ def handle_update(update: dict) -> None:
     text = message.get("text") or message.get("caption") or ""
     content = build_memo_content(text) if text else "#inbox (file)"
     content = enrich_with_youtube_metadata(content)
+    content = enrich_with_github_metadata(content)
     memo_name = create_memo(content)
     print(f"Saved memo: {content!r}")
 

@@ -17,14 +17,27 @@ it falls back to `#inbox`.
 | Prefix      | Tag         |
 |-------------|-------------|
 | `!link`     | `#link`     |
+| `!music`    | `#music`    |
 | `!idea`     | `#idea`     |
 | `!meeting`  | `#meeting`  |
 | `!podcast`  | `#podcast`  |
 | `!todo`     | `#todo`     |
+| `!github`   | `#github`   |
 | *(none)*    | `#inbox`    |
 
 Example: sending `!link https://example.com cool article` creates a memo
 with content `#link https://example.com cool article`.
+
+## Rich link enrichment
+
+- **YouTube** links (`youtube.com/watch`, `youtu.be`, `.../shorts/...`) are
+  enriched with the video title and channel name, fetched from YouTube's
+  public oEmbed endpoint (no API key needed). Prepended as
+  `🎵 <title> — <channel>`.
+- **GitHub repo** links (`github.com/<owner>/<repo>`) are enriched with the
+  repo description, primary language, and star count, fetched from the
+  public GitHub API (no token needed, subject to GitHub's unauthenticated
+  rate limits). Prepended as `🐙 <owner>/<repo> — <description> (<lang> · ⭐ N)`.
 
 ## Files, photos, voice notes
 
