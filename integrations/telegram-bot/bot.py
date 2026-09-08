@@ -23,11 +23,15 @@ public oEmbed API), and GitHub repo links are enriched with the repo
 description, primary language, and star count (via the public GitHub API),
 both prepended to the memo content.
 
+Replying (in Telegram) to a message that was already turned into a memo
+creates a Memos *comment* on that memo instead of a new top-level memo.
+
 Run:
     pip install -r requirements.txt
     python3 bot.py
 """
 import base64
+import json
 import mimetypes
 import os
 import re
@@ -43,6 +47,7 @@ MEMOS_TOKEN = os.environ["MEMOS_TOKEN"]
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
+MESSAGE_MAP_FILE = os.path.join(os.path.dirname(__file__), "message_map.json")
 
 # prefix -> tag mapping
 PREFIX_TAGS = {
@@ -66,6 +71,19 @@ def load_offset() -> int:
 def save_offset(offset: int) -> None:
     with open(OFFSET_FILE, "w") as f:
         f.write(str(offset))
+
+
+def load_message_map() -> dict:
+    """Maps a Telegram message_id (str) -> Memos memo name, e.g. 'memos/abc123'."""
+    if os.path.exists(MESSAGE_MAP_FILE):
+        with open(MESSAGE_MAP_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_message_map(message_map: dict) -> None:
+    with open(MESSAGE_MAP_FILE, "w") as f:
+        json.dump(message_map, f)
 
 
 def build_memo_content(text: str) -> str:
@@ -167,6 +185,21 @@ def create_memo(content: str) -> str:
     return resp.json()["name"]  # e.g. "memos/abc123"
 
 
+def create_comment(memo_name: str, content: str) -> str:
+    """Creates a comment on an existing memo. memo_name is e.g. 'memos/abc123'."""
+    resp = requests.post(
+        f"{MEMOS_URL}/api/v1/{memo_name}/comments",
+        headers={
+            "Authorization": f"Bearer {MEMOS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        json={"content": content, "visibility": "PRIVATE"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["name"]
+
+
 def download_telegram_file(file_id: str) -> tuple[bytes, str]:
     """Returns (file_bytes, file_path) for a Telegram file_id."""
     resp = requests.get(
@@ -223,17 +256,33 @@ def extract_file(message: dict) -> tuple[str, str, str] | None:
     return None
 
 
-def handle_update(update: dict) -> None:
+def handle_update(update: dict, message_map: dict) -> None:
     message = update.get("message")
     if not message:
         return
 
     text = message.get("text") or message.get("caption") or ""
-    content = build_memo_content(text) if text else "#inbox (file)"
-    content = enrich_with_youtube_metadata(content)
-    content = enrich_with_github_metadata(content)
-    memo_name = create_memo(content)
-    print(f"Saved memo: {content!r}")
+    reply_to = message.get("reply_to_message")
+    parent_memo_name = None
+    if reply_to:
+        parent_memo_name = message_map.get(str(reply_to["message_id"]))
+
+    if parent_memo_name:
+        # This message is a reply to a message we've already turned into a
+        # memo -> file it as a comment on that memo instead of a new memo.
+        comment_content = text or "(file)"
+        comment_name = create_comment(parent_memo_name, comment_content)
+        print(f"Saved comment on {parent_memo_name}: {comment_content!r}")
+        memo_name = comment_name  # attachments on a reply go on the comment
+    else:
+        content = build_memo_content(text) if text else "#inbox (file)"
+        content = enrich_with_youtube_metadata(content)
+        content = enrich_with_github_metadata(content)
+        memo_name = create_memo(content)
+        print(f"Saved memo: {content!r}")
+
+    message_map[str(message["message_id"])] = memo_name
+    save_message_map(message_map)
 
     file_info = extract_file(message)
     if file_info:
@@ -245,6 +294,7 @@ def handle_update(update: dict) -> None:
 
 def main() -> None:
     offset = load_offset()
+    message_map = load_message_map()
     print("Telegram -> Memos bridge started. Waiting for messages...")
     while True:
         try:
@@ -256,7 +306,7 @@ def main() -> None:
             resp.raise_for_status()
             result = resp.json().get("result", [])
             for update in result:
-                handle_update(update)
+                handle_update(update, message_map)
                 offset = update["update_id"] + 1
                 save_offset(offset)
         except requests.RequestException as exc:

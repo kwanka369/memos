@@ -47,6 +47,17 @@ downloaded from Telegram and uploaded to Memos via
 If the message has no text/caption, the memo content defaults to
 `#inbox (file)`.
 
+## Replies -> Memos comments
+
+If you reply (in Telegram) to a message that the bridge already turned
+into a memo, the reply is posted as a **comment** on that memo
+(`POST /api/v1/{memo}/comments`) instead of creating a new top-level memo.
+This mirrors Memos' own comment feature (visible when you open a memo's
+detail view and use "Write a comment").
+
+The mapping of Telegram `message_id` -> Memos memo/comment name is kept in
+`message_map.json` so replies keep working across restarts.
+
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in:
@@ -66,7 +77,8 @@ If the message has no text/caption, the memo content defaults to
    ```
 
 The script keeps track of the last processed Telegram update in
-`offset.txt` so it won't reprocess messages after a restart.
+`offset.txt`, and the message->memo mapping in `message_map.json`, so
+neither reprocessing nor reply-tracking breaks across restarts.
 
 ## Limitations / next steps
 
