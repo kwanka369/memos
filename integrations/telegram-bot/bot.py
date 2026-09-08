@@ -256,12 +256,49 @@ def extract_file(message: dict) -> tuple[str, str, str] | None:
     return None
 
 
+# Message field -> automatic tag, applied regardless of any !prefix, so
+# e.g. every voice message you send yourself gets #voice.
+AUTO_TAGS = {
+    "photo": "photo",
+    "voice": "voice",
+    "video_note": "video",
+    "video": "video",
+    "audio": "audio",
+    "document": "file",
+}
+
+
+def get_auto_tag(message: dict) -> str | None:
+    if "photo" in message:
+        return AUTO_TAGS["photo"]
+    for field in FILE_FIELDS:
+        if field in message:
+            return AUTO_TAGS[field]
+    return None
+
+
+def add_auto_tag(content: str, tag: str | None) -> str:
+    if not tag:
+        return content
+    hashtag = f"#{tag}"
+    if hashtag in content.split():
+        return content
+    # Insert right after the first existing tag/word so #inbox #voice ...
+    # reads naturally, e.g. "#inbox #voice message text".
+    parts = content.split(" ", 1)
+    if parts[0].startswith("#"):
+        rest = parts[1] if len(parts) > 1 else ""
+        return f"{parts[0]} {hashtag} {rest}".strip()
+    return f"{hashtag} {content}".strip()
+
+
 def handle_update(update: dict, message_map: dict) -> None:
     message = update.get("message")
     if not message:
         return
 
     text = message.get("text") or message.get("caption") or ""
+    auto_tag = get_auto_tag(message)
     reply_to = message.get("reply_to_message")
     parent_memo_name = None
     if reply_to:
@@ -270,12 +307,13 @@ def handle_update(update: dict, message_map: dict) -> None:
     if parent_memo_name:
         # This message is a reply to a message we've already turned into a
         # memo -> file it as a comment on that memo instead of a new memo.
-        comment_content = text or "(file)"
+        comment_content = add_auto_tag(text or "(file)", auto_tag)
         comment_name = create_comment(parent_memo_name, comment_content)
         print(f"Saved comment on {parent_memo_name}: {comment_content!r}")
         memo_name = comment_name  # attachments on a reply go on the comment
     else:
         content = build_memo_content(text) if text else "#inbox (file)"
+        content = add_auto_tag(content, auto_tag)
         content = enrich_with_youtube_metadata(content)
         content = enrich_with_github_metadata(content)
         memo_name = create_memo(content)
