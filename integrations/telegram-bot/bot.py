@@ -13,10 +13,15 @@ Messages can start with a prefix to route them into a specific tag:
 
 Anything without a recognized prefix is filed under #inbox.
 
+Photos, documents, voice notes, audio, and video notes are downloaded from
+Telegram and attached to the created memo via the Memos attachments API.
+
 Run:
     pip install -r requirements.txt
     python3 bot.py
 """
+import base64
+import mimetypes
 import os
 import time
 import requests
@@ -62,7 +67,7 @@ def build_memo_content(text: str) -> str:
     return f"#inbox {stripped}".strip()
 
 
-def create_memo(content: str) -> None:
+def create_memo(content: str) -> str:
     resp = requests.post(
         f"{MEMOS_URL}/api/v1/memos",
         headers={
@@ -73,19 +78,81 @@ def create_memo(content: str) -> None:
         timeout=10,
     )
     resp.raise_for_status()
+    return resp.json()["name"]  # e.g. "memos/abc123"
+
+
+def download_telegram_file(file_id: str) -> tuple[bytes, str]:
+    """Returns (file_bytes, file_path) for a Telegram file_id."""
+    resp = requests.get(
+        f"{TELEGRAM_API}/getFile", params={"file_id": file_id}, timeout=10
+    )
+    resp.raise_for_status()
+    file_path = resp.json()["result"]["file_path"]
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+    file_resp = requests.get(file_url, timeout=30)
+    file_resp.raise_for_status()
+    return file_resp.content, file_path
+
+
+def attach_file_to_memo(memo_name: str, filename: str, mime_type: str, data: bytes) -> None:
+    resp = requests.post(
+        f"{MEMOS_URL}/api/v1/attachments",
+        headers={
+            "Authorization": f"Bearer {MEMOS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "filename": filename,
+            "type": mime_type or "application/octet-stream",
+            "content": base64.b64encode(data).decode("ascii"),
+            "memo": memo_name,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
+# Telegram update fields that carry a file, in priority order (largest/most
+# specific first), and how to derive a filename from them.
+FILE_FIELDS = ("document", "video", "voice", "audio", "video_note")
+
+
+def extract_file(message: dict) -> tuple[str, str, str] | None:
+    """Returns (file_id, filename, mime_type) for the first file found, or None."""
+    if "photo" in message:
+        # photo is a list of sizes; take the largest (last one)
+        largest = message["photo"][-1]
+        return largest["file_id"], f"{largest['file_id']}.jpg", "image/jpeg"
+
+    for field in FILE_FIELDS:
+        if field in message:
+            item = message[field]
+            file_id = item["file_id"]
+            mime_type = item.get("mime_type", "")
+            filename = item.get("file_name")
+            if not filename:
+                ext = mimetypes.guess_extension(mime_type) or ""
+                filename = f"{field}_{file_id}{ext}"
+            return file_id, filename, mime_type
+    return None
 
 
 def handle_update(update: dict) -> None:
     message = update.get("message")
     if not message:
         return
-    text = message.get("text")
-    if not text:
-        # non-text messages (photos, files, voice, ...) are not handled yet
-        return
-    content = build_memo_content(text)
-    create_memo(content)
+
+    text = message.get("text") or message.get("caption") or ""
+    content = build_memo_content(text) if text else "#inbox (file)"
+    memo_name = create_memo(content)
     print(f"Saved memo: {content!r}")
+
+    file_info = extract_file(message)
+    if file_info:
+        file_id, filename, mime_type = file_info
+        data, _ = download_telegram_file(file_id)
+        attach_file_to_memo(memo_name, filename, mime_type, data)
+        print(f"Attached file {filename!r} ({len(data)} bytes) to {memo_name}")
 
 
 def main() -> None:

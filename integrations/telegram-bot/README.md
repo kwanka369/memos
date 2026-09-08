@@ -26,6 +26,14 @@ it falls back to `#inbox`.
 Example: sending `!link https://example.com cool article` creates a memo
 with content `#link https://example.com cool article`.
 
+## Files, photos, voice notes
+
+Any attached file (photo, document, voice message, audio, video note) is
+downloaded from Telegram and uploaded to Memos via
+`POST /api/v1/attachments`, linked to the memo created for that message.
+If the message has no text/caption, the memo content defaults to
+`#inbox (file)`.
+
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in:
@@ -49,9 +57,6 @@ The script keeps track of the last processed Telegram update in
 
 ## Limitations / next steps
 
-- Only text messages are handled for now. Photos, voice notes, and files
-  are ignored (a natural next step: download them and upload via
-  `POST /api/v1/resources`, attaching to the created memo).
 - No retry/backoff beyond a simple 5s sleep on network errors.
 - Intended to run as a single long-lived process (e.g. via `systemd`,
   `docker`, or a simple `nohup`/`screen` session), not as a one-shot script.
