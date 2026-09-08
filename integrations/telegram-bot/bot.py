@@ -6,6 +6,7 @@ Polls a Telegram bot for new messages and creates a Memos entry for each one.
 Messages can start with a prefix to route them into a specific tag:
 
     !link     -> #link
+    !music    -> #music
     !idea     -> #idea
     !meeting  -> #meeting
     !podcast  -> #podcast
@@ -16,6 +17,9 @@ Anything without a recognized prefix is filed under #inbox.
 Photos, documents, voice notes, audio, and video notes are downloaded from
 Telegram and attached to the created memo via the Memos attachments API.
 
+YouTube links are enriched with the video title and channel name (via the
+public oEmbed API) prepended to the memo content.
+
 Run:
     pip install -r requirements.txt
     python3 bot.py
@@ -23,6 +27,7 @@ Run:
 import base64
 import mimetypes
 import os
+import re
 import time
 import requests
 from dotenv import load_dotenv
@@ -39,6 +44,7 @@ OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
 # prefix -> tag mapping
 PREFIX_TAGS = {
     "!link": "link",
+    "!music": "music",
     "!idea": "idea",
     "!meeting": "meeting",
     "!podcast": "podcast",
@@ -65,6 +71,41 @@ def build_memo_content(text: str) -> str:
             rest = stripped[len(prefix):].strip()
             return f"#{tag} {rest}".strip()
     return f"#inbox {stripped}".strip()
+
+
+YOUTUBE_URL_RE = re.compile(
+    r"https?://(?:www\.)?(?:youtube\.com/watch\?v=[\w-]+|youtu\.be/[\w-]+|"
+    r"youtube\.com/shorts/[\w-]+)\S*"
+)
+
+
+def get_youtube_oembed(url: str) -> dict | None:
+    """Fetch title/author/thumbnail for a YouTube URL via the public oEmbed API."""
+    try:
+        resp = requests.get(
+            "https://www.youtube.com/oembed",
+            params={"url": url, "format": "json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException:
+        return None
+
+
+def enrich_with_youtube_metadata(content: str) -> str:
+    match = YOUTUBE_URL_RE.search(content)
+    if not match:
+        return content
+    info = get_youtube_oembed(match.group(0))
+    if not info:
+        return content
+    title = info.get("title", "")
+    author = info.get("author_name", "")
+    if not title:
+        return content
+    header = f"🎵 {title} — {author}" if author else f"🎵 {title}"
+    return f"{header}\n{content}"
 
 
 def create_memo(content: str) -> str:
@@ -144,6 +185,7 @@ def handle_update(update: dict) -> None:
 
     text = message.get("text") or message.get("caption") or ""
     content = build_memo_content(text) if text else "#inbox (file)"
+    content = enrich_with_youtube_metadata(content)
     memo_name = create_memo(content)
     print(f"Saved memo: {content!r}")
 
