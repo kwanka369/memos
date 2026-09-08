@@ -1,4 +1,4 @@
-import { BookmarkIcon } from "lucide-react";
+import { BookmarkIcon, MessageCircleIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import RelativeTime from "@/components/RelativeTime";
@@ -29,7 +29,7 @@ const MemoHeader: React.FC<MemoHeaderProps> = ({ timeDisplay = "relative", showC
   const t = useTranslate();
   const [reactionSelectorOpen, setReactionSelectorOpen] = useState(false);
 
-  const { memo, creator, currentUser, parentPage, isArchived, readonly, openEditor } = useMemoViewContext();
+  const { memo, creator, currentUser, parentPage, isArchived, readonly, openEditor, openCommentEditor } = useMemoViewContext();
   const { createTime, updateTime, displayTime: memoDisplayTime, isDisplayingUpdatedTime, relativeTimeFormat } = useMemoViewDerived();
   const { newMemoName } = useNewMemo();
   const visibilityOption = getVisibilityOption(memo.visibility);
@@ -128,6 +128,19 @@ const MemoHeader: React.FC<MemoHeaderProps> = ({ timeDisplay = "relative", showC
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
+        )}
+
+        {currentUser && !isArchived && (
+          <Tooltip>
+            <TooltipTrigger
+              aria-label={t("memo.comment.write-a-comment")}
+              className={MEMO_HEADER_ACTION_CLASSES}
+              onClick={openCommentEditor}
+            >
+              <MessageCircleIcon className="size-4" strokeWidth={1.8} />
+            </TooltipTrigger>
+            <TooltipContent>{t("memo.comment.write-a-comment")}</TooltipContent>
+          </Tooltip>
         )}
 
         <MemoActionMenu memo={memo} parentPage={parentPage} readonly={readonly} onEdit={openEditor} />

@@ -46,6 +46,8 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [EditorComponent, setEditorComponent] = useState<ComponentType<MemoEditorProps>>();
+  const [showCommentEditor, setShowCommentEditor] = useState(false);
+  const [CommentEditorComponent, setCommentEditorComponent] = useState<ComponentType<MemoEditorProps>>();
   const [cardWidth, setCardWidth] = useState(0);
 
   const currentUser = useCurrentUser();
@@ -68,6 +70,7 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
 
   const { previewState, openPreview, setPreviewOpen } = useImagePreview();
   const editorHostRef = useRef<HTMLDivElement>(null);
+  const commentEditorHostRef = useRef<HTMLDivElement>(null);
 
   const focusMountedEditor = useCallback(() => {
     const codeMirrorContent = editorHostRef.current?.querySelector<HTMLElement>('.cm-content[contenteditable="true"]');
@@ -91,8 +94,31 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
 
   useImperativeHandle(ref, () => ({ openEditor }), [openEditor]);
 
+  const focusMountedCommentEditor = useCallback(() => {
+    const codeMirrorContent = commentEditorHostRef.current?.querySelector<HTMLElement>('.cm-content[contenteditable="true"]');
+    const fallbackInput = commentEditorHostRef.current?.querySelector<HTMLElement>("textarea, input");
+    (codeMirrorContent ?? fallbackInput)?.focus();
+  }, []);
+
+  const openCommentEditor = useCallback(() => {
+    if (showCommentEditor && CommentEditorComponent) {
+      focusMountedCommentEditor();
+      return;
+    }
+    void loadMemoEditor()
+      .then(({ default: MemoEditor }) => {
+        setCommentEditorComponent(() => MemoEditor);
+        setShowCommentEditor(true);
+      })
+      .catch(() => undefined);
+  }, [CommentEditorComponent, focusMountedCommentEditor, showCommentEditor]);
+  const closeCommentEditor = useCallback(() => setShowCommentEditor(false), []);
+  const handleCommentCreated = useCallback(() => setShowCommentEditor(false), []);
+
   const isInMemoDetailPage = isMemoDetailPath(location.pathname, memoData.name);
   const showCommentPreview = !isInMemoDetailPage && computeCommentAmount(memoData) > 0;
+  const showInlineCommentEditor = showCommentEditor && CommentEditorComponent && !isInMemoDetailPage;
+  const attachesBelow = showCommentPreview || showInlineCommentEditor;
 
   // The card width is only needed by the share-image dialog. Keep feed cards
   // free of a permanent ResizeObserver and measure only while that dialog is open.
@@ -139,6 +165,7 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
       showBlurredContent,
       blurred,
       openEditor,
+      openCommentEditor,
       toggleBlurVisibility,
       openPreview,
     }),
@@ -153,6 +180,7 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
       showBlurredContent,
       blurred,
       openEditor,
+      openCommentEditor,
       toggleBlurVisibility,
       openPreview,
     ],
@@ -160,7 +188,7 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
 
   const article = (
     <article
-      className={cn(MEMO_CARD_BASE_CLASSES, showCommentPreview ? "mb-0 rounded-b-none" : "mb-2", className)}
+      className={cn(MEMO_CARD_BASE_CLASSES, attachesBelow ? "mb-0 rounded-b-none" : "mb-2", className)}
       ref={cardRef}
       tabIndex={readonly ? -1 : 0}
     >
@@ -193,13 +221,22 @@ const MemoView = forwardRef<MemoViewHandle, MemoViewProps>((props, ref) => {
     </article>
   );
 
-  const memoDisplay = showCommentPreview ? (
+  const memoDisplay = (
     <div className="w-full mb-2">
       {article}
-      <MemoCommentListView />
+      {showInlineCommentEditor && (
+        <div ref={commentEditorHostRef} className="w-full border border-t-0 border-border rounded-b-lg px-2 pt-2 pb-2">
+          <CommentEditorComponent
+            autoFocus
+            cacheKey={`inline-comment-editor-${memoData.name}`}
+            parentMemoName={memoData.name}
+            onConfirm={handleCommentCreated}
+            onCancel={closeCommentEditor}
+          />
+        </div>
+      )}
+      {showCommentPreview && <MemoCommentListView />}
     </div>
-  ) : (
-    article
   );
 
   return (
