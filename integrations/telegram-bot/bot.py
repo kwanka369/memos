@@ -70,10 +70,17 @@ def build_memo_content(text: str) -> str:
             if prefix == "!task":
                 # Generate a Markdown task list; Memos renders "- [ ]" as
                 # interactive checkboxes that can be ticked off in the WebUI.
-                lines = [line.strip() for line in rest.splitlines() if line.strip()]
-                if not lines:
+                # Two input styles are supported:
+                #   1. Bracket groups:   !task [a] [b] [c]
+                #   2. One per line:     !task a\nb\nc
+                bracket_items = re.findall(r"\[([^\[\]]+)\]", rest)
+                if bracket_items:
+                    items = [item.strip() for item in bracket_items if item.strip()]
+                else:
+                    items = [line.strip() for line in rest.splitlines() if line.strip()]
+                if not items:
                     return "#task"
-                tasks = "\n".join(f"- [ ] {line}" for line in lines)
+                tasks = "\n".join(f"- [ ] {item}" for item in items)
                 return f"#task\n{tasks}"
             return f"#{tag} {rest}".strip()
     return f"#inbox {stripped}".strip()
