@@ -58,7 +58,25 @@ PREFIX_TAGS = {
     "!podcast": "podcast",
     "!todo": "todo",
     "!github": "github",
+    "!task": "task",
 }
+
+
+def build_memo_content(text: str) -> str:
+    stripped = text.strip()
+    for prefix, tag in PREFIX_TAGS.items():
+        if stripped.lower().startswith(prefix):
+            rest = stripped[len(prefix):].strip()
+            if prefix == "!task":
+                # Generate a Markdown task list; Memos renders "- [ ]" as
+                # interactive checkboxes that can be ticked off in the WebUI.
+                lines = [line.strip() for line in rest.splitlines() if line.strip()]
+                if not lines:
+                    return "#task"
+                tasks = "\n".join(f"- [ ] {line}" for line in lines)
+                return f"#task\n{tasks}"
+            return f"#{tag} {rest}".strip()
+    return f"#inbox {stripped}".strip()
 
 
 def load_offset() -> int:
@@ -84,15 +102,6 @@ def load_message_map() -> dict:
 def save_message_map(message_map: dict) -> None:
     with open(MESSAGE_MAP_FILE, "w") as f:
         json.dump(message_map, f)
-
-
-def build_memo_content(text: str) -> str:
-    stripped = text.strip()
-    for prefix, tag in PREFIX_TAGS.items():
-        if stripped.lower().startswith(prefix):
-            rest = stripped[len(prefix):].strip()
-            return f"#{tag} {rest}".strip()
-    return f"#inbox {stripped}".strip()
 
 
 YOUTUBE_URL_RE = re.compile(

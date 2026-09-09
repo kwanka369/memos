@@ -14,19 +14,33 @@ memo via the Memos REST API (`POST /api/v1/memos`) for each one.
 Start a message with one of these prefixes to route it to a tag. Otherwise
 it falls back to `#inbox`.
 
-| Prefix      | Tag         |
-|-------------|-------------|
-| `!link`     | `#link`     |
-| `!music`    | `#music`    |
-| `!idea`     | `#idea`     |
-| `!meeting`  | `#meeting`  |
-| `!podcast`  | `#podcast`  |
-| `!todo`     | `#todo`     |
-| `!github`   | `#github`   |
-| *(none)*    | `#inbox`    |
+| Prefix      | Tag         | Extra behavior |
+|-------------|-------------|----------------|
+| `!link`     | `#link`     | |
+| `!music`    | `#music`    | |
+| `!idea`     | `#idea`     | |
+| `!meeting`  | `#meeting`  | |
+| `!podcast`  | `#podcast`  | |
+| `!todo`     | `#todo`     | |
+| `!github`   | `#github`   | |
+| `!task`     | `#task`     | Each following line becomes a Markdown task list item (`- [ ]`), rendered as interactive checkboxes in Memos |
+| *(none)*    | `#inbox`    | |
 
 Example: sending `!link https://example.com cool article` creates a memo
 with content `#link https://example.com cool article`.
+
+Example: sending
+```
+!task Paskambinti daktarui
+Nusipirkti pieno
+```
+creates a memo:
+```
+#task
+- [ ] Paskambinti daktarui
+- [ ] Nusipirkti pieno
+```
+which renders as clickable checkboxes in Memos.
 
 ## Rich link enrichment
 
