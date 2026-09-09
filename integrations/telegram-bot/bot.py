@@ -388,12 +388,33 @@ def handle_update(update: dict, message_map: dict) -> None:
         return
 
     text = message.get("text") or message.get("caption") or ""
-    should_transcribe, text = strip_transcribe_prefix(text)
-    auto_tag = get_auto_tag(message)
     reply_to = message.get("reply_to_message")
     parent_memo_name = None
     if reply_to:
         parent_memo_name = message_map.get(str(reply_to["message_id"]))
+
+    # Telegram voice messages (the round mic-button recordings) can't carry a
+    # caption at all, so "!txt" can't be attached directly to them. Instead,
+    # replying "!txt" to an already-bridged voice/audio message transcribes
+    # *that* message's audio and posts the transcript as a comment.
+    if parent_memo_name and text.strip().lower() == TRANSCRIBE_PREFIX and reply_to:
+        reply_file_info = extract_file(reply_to)
+        if reply_file_info:
+            reply_file_id, _, reply_mime_type = reply_file_info
+            reply_data, _ = download_telegram_file(reply_file_id)
+            transcript = transcribe_with_gemini(reply_data, reply_mime_type)
+            comment_content = f"📝 {transcript}" if transcript else "⚠️ !txt: transcription failed or unavailable"
+            comment_name = create_comment(parent_memo_name, comment_content)
+            message_map[str(message["message_id"])] = comment_name
+            save_message_map(message_map)
+            print(f"Transcribed reply-audio -> comment on {parent_memo_name}: {comment_content!r}")
+            return
+        # No audio found on the replied-to message -> fall through to the
+        # normal reply-as-comment handling below (treats "!txt" as plain text).
+
+    should_transcribe, text = strip_transcribe_prefix(text)
+
+    auto_tag = get_auto_tag(message)
 
     # Download the attached file (if any) up front so a requested
     # transcription can be folded into the memo/comment content below.

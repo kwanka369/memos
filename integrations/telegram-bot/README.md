@@ -63,18 +63,38 @@ If the message has no text/caption, the memo content defaults to
 
 ## Voice transcription (`!txt`)
 
-Caption a voice/audio message (or send it as a reply) with `!txt` to have
-the bot transcribe it via Gemini and append the transcript to the memo,
-right alongside the original audio attachment:
+Telegram voice messages (the round mic-button recordings) **cannot carry a
+caption at all** — that's a Telegram client limitation, not a bug here. So
+there are two ways to trigger transcription, depending on what you're
+sending:
+
+**1. Reply `!txt` to a voice message you already sent** (the recommended way
+for actual voice notes):
 
 ```
-🎤 (send as a voice message with caption) !txt
+🎤 (send a voice message, gets tagged #voice as usual)
+↳ reply to it with the text: !txt
+```
+
+The bot fetches the *original* voice message's audio, transcribes it via
+Gemini, and posts the transcript as a **comment** on that memo:
+
+```
+📝 <transcribed text>
+```
+
+**2. Caption it directly with `!txt`** — this only works for file types
+Telegram *does* allow captions on (uploaded audio files, videos, documents),
+not native voice messages:
+
+```
+🎵 (send an audio file with caption) !txt
 ```
 
 results in:
 
 ```
-#inbox #voice (file)
+#inbox #audio (file)
 
 📝 <transcribed text>
 ```
@@ -83,12 +103,8 @@ Requires `GEMINI_API_KEY` to be set in the bot's environment (see
 `.env.example`). If the key is missing, or transcription fails for any
 reason (rate limit, unsupported format, network error), the memo/comment
 and audio attachment are still created as usual — just without the
-transcript. The model used is `gemini-2.5-flash` by default; override with
-`GEMINI_TRANSCRIBE_MODEL`.
-
-`!txt` can be combined with a reply: replying to an existing memo's
-message with a `!txt`-captioned voice note adds the transcript as a
-comment instead of a new memo.
+transcript (or with a `⚠️` note, for the reply-based flow). The model used
+is `gemini-3.6-flash` by default; override with `GEMINI_TRANSCRIBE_MODEL`.
 
 ## Replies -> Memos comments
 
