@@ -12,8 +12,12 @@ Messages can start with a prefix to route them into a specific tag:
     !podcast  -> #podcast
     !todo     -> #todo
     !github   -> #github
+    !task     -> #task (as a Markdown checkbox list)
 
 Anything without a recognized prefix is filed under #inbox.
+
+A voice/audio message captioned "!txt" is transcribed via Gemini and the
+transcript is appended to the memo, alongside the original audio attachment.
 
 Photos, documents, voice notes, audio, and video notes are downloaded from
 Telegram and attached to the created memo via the Memos attachments API.
@@ -44,6 +48,8 @@ load_dotenv()
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 MEMOS_URL = os.environ.get("MEMOS_URL", "http://localhost:5230").rstrip("/")
 MEMOS_TOKEN = os.environ["MEMOS_TOKEN"]
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_TRANSCRIBE_MODEL = os.environ.get("GEMINI_TRANSCRIBE_MODEL", "gemini-3.6-flash")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
@@ -187,6 +193,74 @@ def enrich_with_github_metadata(content: str) -> str:
     return f"{header}\n{content}"
 
 
+# A caption/text starting with this prefix (on any message) requests that
+# any attached audio be transcribed via Gemini. The prefix itself is
+# stripped from the caption before it's parsed as a normal !prefix tag.
+TRANSCRIBE_PREFIX = "!txt"
+
+# MIME types Gemini's generateContent audio input accepts.
+TRANSCRIBABLE_MIME_TYPES = {
+    "audio/wav", "audio/x-wav", "audio/mp3", "audio/mpeg", "audio/aiff",
+    "audio/aac", "audio/ogg", "audio/flac", "audio/x-flac", "audio/x-m4a",
+    "audio/mp4",
+}
+
+
+def strip_transcribe_prefix(text: str) -> tuple[bool, str]:
+    """Detects a leading !txt and returns (should_transcribe, remaining_text)."""
+    stripped = text.strip()
+    if stripped.lower().startswith(TRANSCRIBE_PREFIX):
+        return True, stripped[len(TRANSCRIBE_PREFIX):].strip()
+    return False, text
+
+
+def transcribe_with_gemini(data: bytes, mime_type: str) -> str | None:
+    """Transcribes audio bytes via the Gemini generateContent API. Returns the
+    transcript text, or None if transcription is unavailable/failed."""
+    if not GEMINI_API_KEY:
+        print("!txt requested but GEMINI_API_KEY is not configured; skipping transcription.")
+        return None
+    if mime_type not in TRANSCRIBABLE_MIME_TYPES:
+        print(f"!txt requested but mime type {mime_type!r} is not transcribable; skipping.")
+        return None
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TRANSCRIBE_MODEL}:generateContent",
+            params={"key": GEMINI_API_KEY},
+            json={
+                "contents": [{
+                    "parts": [
+                        {
+                            "text": (
+                                "Transcribe the audio accurately. Return only the "
+                                "transcript text, in the original spoken language. "
+                                "Do not summarize, translate, or add commentary."
+                            )
+                        },
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64.b64encode(data).decode("ascii"),
+                            }
+                        },
+                    ]
+                }]
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        candidates = result.get("candidates", [])
+        if not candidates:
+            return None
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts).strip()
+        return text or None
+    except requests.RequestException as exc:
+        print(f"Gemini transcription failed: {exc}")
+        return None
+
+
 def create_memo(content: str) -> str:
     resp = requests.post(
         f"{MEMOS_URL}/api/v1/memos",
@@ -314,16 +388,33 @@ def handle_update(update: dict, message_map: dict) -> None:
         return
 
     text = message.get("text") or message.get("caption") or ""
+    should_transcribe, text = strip_transcribe_prefix(text)
     auto_tag = get_auto_tag(message)
     reply_to = message.get("reply_to_message")
     parent_memo_name = None
     if reply_to:
         parent_memo_name = message_map.get(str(reply_to["message_id"]))
 
+    # Download the attached file (if any) up front so a requested
+    # transcription can be folded into the memo/comment content below.
+    file_info = extract_file(message)
+    file_data = None
+    if file_info:
+        file_id, filename, mime_type = file_info
+        file_data, _ = download_telegram_file(file_id)
+
+    transcript = None
+    if should_transcribe and file_data is not None:
+        transcript = transcribe_with_gemini(file_data, mime_type)
+        if transcript:
+            print(f"Transcribed audio ({len(file_data)} bytes) -> {transcript!r}")
+
     if parent_memo_name:
         # This message is a reply to a message we've already turned into a
         # memo -> file it as a comment on that memo instead of a new memo.
         comment_content = add_auto_tag(text or "(file)", auto_tag)
+        if transcript:
+            comment_content = f"{comment_content}\n\n📝 {transcript}"
         comment_name = create_comment(parent_memo_name, comment_content)
         print(f"Saved comment on {parent_memo_name}: {comment_content!r}")
         memo_name = comment_name  # attachments on a reply go on the comment
@@ -332,18 +423,18 @@ def handle_update(update: dict, message_map: dict) -> None:
         content = add_auto_tag(content, auto_tag)
         content = enrich_with_youtube_metadata(content)
         content = enrich_with_github_metadata(content)
+        if transcript:
+            content = f"{content}\n\n📝 {transcript}"
         memo_name = create_memo(content)
         print(f"Saved memo: {content!r}")
 
     message_map[str(message["message_id"])] = memo_name
     save_message_map(message_map)
 
-    file_info = extract_file(message)
-    if file_info:
-        file_id, filename, mime_type = file_info
-        data, _ = download_telegram_file(file_id)
-        attach_file_to_memo(memo_name, filename, mime_type, data)
-        print(f"Attached file {filename!r} ({len(data)} bytes) to {memo_name}")
+    if file_info and file_data is not None:
+        _, filename, mime_type = file_info
+        attach_file_to_memo(memo_name, filename, mime_type, file_data)
+        print(f"Attached file {filename!r} ({len(file_data)} bytes) to {memo_name}")
 
 
 def main() -> None:

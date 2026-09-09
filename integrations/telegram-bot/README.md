@@ -61,6 +61,35 @@ downloaded from Telegram and uploaded to Memos via
 If the message has no text/caption, the memo content defaults to
 `#inbox (file)`.
 
+## Voice transcription (`!txt`)
+
+Caption a voice/audio message (or send it as a reply) with `!txt` to have
+the bot transcribe it via Gemini and append the transcript to the memo,
+right alongside the original audio attachment:
+
+```
+🎤 (send as a voice message with caption) !txt
+```
+
+results in:
+
+```
+#inbox #voice (file)
+
+📝 <transcribed text>
+```
+
+Requires `GEMINI_API_KEY` to be set in the bot's environment (see
+`.env.example`). If the key is missing, or transcription fails for any
+reason (rate limit, unsupported format, network error), the memo/comment
+and audio attachment are still created as usual — just without the
+transcript. The model used is `gemini-2.5-flash` by default; override with
+`GEMINI_TRANSCRIBE_MODEL`.
+
+`!txt` can be combined with a reply: replying to an existing memo's
+message with a `!txt`-captioned voice note adds the transcript as a
+comment instead of a new memo.
+
 ## Replies -> Memos comments
 
 If you reply (in Telegram) to a message that the bridge already turned
@@ -79,6 +108,8 @@ The mapping of Telegram `message_id` -> Memos memo/comment name is kept in
    - `MEMOS_URL` — your Memos instance URL (default `http://localhost:5230`)
    - `MEMOS_TOKEN` — a Personal Access Token from Memos
      (Settings → My Account → Access Tokens)
+   - `GEMINI_API_KEY` — optional, only needed for `!txt` voice transcription
+     (get one at [aistudio.google.com](https://aistudio.google.com/apikey))
 
 2. Install dependencies:
    ```bash
