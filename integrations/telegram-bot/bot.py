@@ -69,14 +69,22 @@ PREFIX_TAGS = {
     "!podcast": "podcast",
     "!todo": "todo",
     "!github": "github",
+    "!twitterx": "twitterX",
     "!task": "task",
 }
+
+# Host patterns for URL auto-tags (only when no !prefix matched).
+URL_AUTO_TAGS = (
+    (re.compile(r"https?://(?:www\.)?(?:gist\.)?github\.com/\S+", re.I), "github"),
+    (re.compile(r"https?://(?:www\.)?(?:x|twitter)\.com/\S+", re.I), "twitterX"),
+)
 
 
 def build_memo_content(text: str) -> str:
     stripped = text.strip()
+    lowered = stripped.lower()
     for prefix, tag in PREFIX_TAGS.items():
-        if stripped.lower().startswith(prefix):
+        if lowered.startswith(prefix.lower()):
             rest = stripped[len(prefix):].strip()
             if prefix == "!task":
                 # Generate a Markdown task list; Memos renders "- [ ]" as
@@ -94,6 +102,9 @@ def build_memo_content(text: str) -> str:
                 tasks = "\n".join(f"- [ ] {item}" for item in items)
                 return f"#task\n{tasks}"
             return f"#{tag} {rest}".strip()
+    for pattern, tag in URL_AUTO_TAGS:
+        if pattern.search(stripped):
+            return f"#{tag} {stripped}".strip()
     return f"#inbox {stripped}".strip()
 
 
