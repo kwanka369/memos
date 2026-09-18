@@ -54,6 +54,11 @@ GEMINI_TRANSCRIBE_MODEL = os.environ.get("GEMINI_TRANSCRIBE_MODEL", "gemini-3.6-
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
 MESSAGE_MAP_FILE = os.path.join(os.path.dirname(__file__), "message_map.json")
+ALLOWED_USER_IDS = {
+    int(value.strip())
+    for value in os.environ.get("ALLOWED_USER_IDS", "").split(",")
+    if value.strip()
+}
 
 # prefix -> tag mapping
 PREFIX_TAGS = {
@@ -387,6 +392,11 @@ def handle_update(update: dict, message_map: dict) -> None:
     if not message:
         return
 
+    user_id = message.get("from", {}).get("id")
+    if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
+        print(f"Ignored message from unauthorized Telegram user {user_id!r}")
+        return
+
     text = message.get("text") or message.get("caption") or ""
     reply_to = message.get("reply_to_message")
     parent_memo_name = None
@@ -454,8 +464,11 @@ def handle_update(update: dict, message_map: dict) -> None:
 
     if file_info and file_data is not None:
         _, filename, mime_type = file_info
-        attach_file_to_memo(memo_name, filename, mime_type, file_data)
-        print(f"Attached file {filename!r} ({len(file_data)} bytes) to {memo_name}")
+        try:
+            attach_file_to_memo(memo_name, filename, mime_type, file_data)
+            print(f"Attached file {filename!r} ({len(file_data)} bytes) to {memo_name}")
+        except requests.RequestException as exc:
+            print(f"Failed to attach file {filename!r} to {memo_name}: {exc}")
 
 
 def main() -> None:
@@ -472,9 +485,14 @@ def main() -> None:
             resp.raise_for_status()
             result = resp.json().get("result", [])
             for update in result:
-                handle_update(update, message_map)
-                offset = update["update_id"] + 1
-                save_offset(offset)
+                update_id = update["update_id"]
+                try:
+                    handle_update(update, message_map)
+                except Exception as exc:  # noqa: BLE001 - keep the bridge alive even on transient API errors.
+                    print(f"Error handling Telegram update {update_id}: {exc}")
+                finally:
+                    offset = update_id + 1
+                    save_offset(offset)
         except requests.RequestException as exc:
             print(f"Error polling Telegram: {exc}")
             time.sleep(5)
