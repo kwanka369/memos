@@ -23,9 +23,10 @@ Photos, documents, voice notes, audio, and video notes are downloaded from
 Telegram and attached to the created memo via the Memos attachments API.
 
 YouTube links are enriched with the video title and channel name (via the
-public oEmbed API), and GitHub repo links are enriched with the repo
+public oEmbed API), GitHub repo links are enriched with the repo
 description, primary language, and star count (via the public GitHub API),
-both prepended to the memo content.
+and Twitter/X status URLs are enriched with the author and tweet text (via
+the public fxtwitter API), all prepended to the memo content.
 
 Replying (in Telegram) to a message that was already turned into a memo
 creates a Memos *comment* on that memo instead of a new top-level memo.
@@ -204,6 +205,57 @@ def enrich_with_github_metadata(content: str) -> str:
     header = f"🐙 {full_name}"
     if description:
         header += f" — {description}"
+    if details:
+        header += f" ({details})"
+    return f"{header}\n{content}"
+
+
+TWITTER_STATUS_URL_RE = re.compile(
+    r"https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/([\w]+)/status/(\d+)",
+    re.IGNORECASE
+)
+
+
+def get_twitter_status_info(username: str, status_id: str) -> dict | None:
+    """Fetch tweet metadata from the public fxtwitter API (no auth required)."""
+    try:
+        resp = requests.get(
+            f"https://api.fxtwitter.com/{username}/status/{status_id}",
+            headers={"User-Agent": "Memos-Telegram-Bot/1.0"},
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return data.get("tweet")
+    except requests.RequestException:
+        return None
+
+
+def enrich_with_twitter_metadata(content: str) -> str:
+    match = TWITTER_STATUS_URL_RE.search(content)
+    if not match:
+        return content
+    username, status_id = match.group(1), match.group(2)
+    info = get_twitter_status_info(username, status_id)
+    if not info:
+        return content
+    author_name = info.get("author", {}).get("screen_name", username)
+    text = info.get("text", "")
+    if not text:
+        return content
+    truncated_text = text[:200].strip()
+    if len(text) > 200:
+        truncated_text += "…"
+    likes = info.get("likes", 0)
+    views = info.get("views", 0)
+    details_parts = []
+    if likes > 0:
+        details_parts.append(f"❤️ {likes}")
+    if views > 0:
+        details_parts.append(f"👁️ {views}")
+    details = " · ".join(details_parts)
+    header = f"🐦 @{author_name}: {truncated_text}"
     if details:
         header += f" ({details})"
     return f"{header}\n{content}"
@@ -465,6 +517,7 @@ def handle_update(update: dict, message_map: dict) -> None:
         content = add_auto_tag(content, auto_tag)
         content = enrich_with_youtube_metadata(content)
         content = enrich_with_github_metadata(content)
+        content = enrich_with_twitter_metadata(content)
         if transcript:
             content = f"{content}\n\n📝 {transcript}"
         memo_name = create_memo(content)
