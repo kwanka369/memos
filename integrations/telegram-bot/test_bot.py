@@ -5,6 +5,34 @@ import unittest
 from unittest.mock import patch, Mock
 
 
+GITHUB_REPO_URL_RE = re.compile(
+    r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?:/|\s|$)"
+)
+
+
+def enrich_with_github_metadata(content: str, get_github_repo_info_fn) -> str:
+    """Test-friendly version that accepts the API call as a parameter."""
+    match = GITHUB_REPO_URL_RE.search(content)
+    if not match:
+        return content
+    owner, repo = match.group(1), match.group(2)
+    repo = repo.rstrip(".git")
+    info = get_github_repo_info_fn(owner, repo)
+    if not info:
+        return content
+    description = info.get("description") or ""
+    stars = info.get("stargazers_count", 0)
+    language = info.get("language") or ""
+    full_name = info.get("full_name", f"{owner}/{repo}")
+    details = " · ".join(filter(None, [language, f"⭐ {stars}"]))
+    header = f"🐙 {full_name}"
+    if description:
+        header += f" — {description}"
+    if details:
+        header += f" ({details})"
+    return f"{header}\n{content}"
+
+
 TWITTER_STATUS_URL_RE = re.compile(
     r"https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/([\w]+)/status/(\d+)",
     re.IGNORECASE
@@ -39,6 +67,140 @@ def enrich_with_twitter_metadata(content: str, get_twitter_status_info_fn) -> st
     if details:
         header += f" ({details})"
     return f"{header}\n{content}"
+
+
+class TestGitHubEnrichment(unittest.TestCase):
+    def test_github_url_regex_root_repo(self):
+        """Test regex matches root repository URLs."""
+        match = GITHUB_REPO_URL_RE.search("https://github.com/usememos/memos")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "usememos")
+        self.assertEqual(match.group(2), "memos")
+
+    def test_github_url_regex_tree_path(self):
+        """Test regex matches URLs with /tree/ paths."""
+        match = GITHUB_REPO_URL_RE.search("https://github.com/GTalksTech/netops-toolkit/tree/main/scripts")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "GTalksTech")
+        self.assertEqual(match.group(2), "netops-toolkit")
+
+    def test_github_url_regex_blob_path(self):
+        """Test regex matches URLs with /blob/ paths."""
+        match = GITHUB_REPO_URL_RE.search("https://github.com/owner/repo/blob/main/README.md")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "owner")
+        self.assertEqual(match.group(2), "repo")
+
+    def test_github_url_regex_issues_path(self):
+        """Test regex matches URLs with /issues/ paths."""
+        match = GITHUB_REPO_URL_RE.search("https://github.com/owner/repo/issues/123")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "owner")
+        self.assertEqual(match.group(2), "repo")
+
+    def test_github_url_regex_git_suffix(self):
+        """Test regex matches URLs with .git suffix."""
+        match = GITHUB_REPO_URL_RE.search("https://github.com/owner/repo.git")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "owner")
+        self.assertEqual(match.group(2), "repo")
+
+    def test_github_url_regex_trailing_slash(self):
+        """Test regex matches URLs with trailing slash."""
+        match = GITHUB_REPO_URL_RE.search("https://github.com/owner/repo/")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "owner")
+        self.assertEqual(match.group(2), "repo")
+
+    def test_enrich_with_github_metadata_success(self):
+        """Test enrichment with successful API response."""
+        mock_info = {
+            "full_name": "usememos/memos",
+            "description": "A privacy-first, lightweight note-taking service",
+            "stargazers_count": 1234,
+            "language": "Go",
+        }
+        mock_get_info = Mock(return_value=mock_info)
+        
+        content = "#github https://github.com/usememos/memos"
+        result = enrich_with_github_metadata(content, mock_get_info)
+        
+        self.assertIn("🐙 usememos/memos", result)
+        self.assertIn("A privacy-first, lightweight note-taking service", result)
+        self.assertIn("Go", result)
+        self.assertIn("⭐ 1234", result)
+        self.assertIn(content, result)
+
+    def test_enrich_with_github_metadata_tree_url(self):
+        """Test enrichment with /tree/ deep link."""
+        mock_info = {
+            "full_name": "GTalksTech/netops-toolkit",
+            "description": "Network operations toolkit",
+            "stargazers_count": 42,
+            "language": "Python",
+        }
+        mock_get_info = Mock(return_value=mock_info)
+        
+        content = "#github https://github.com/GTalksTech/netops-toolkit/tree/main/scripts"
+        result = enrich_with_github_metadata(content, mock_get_info)
+        
+        self.assertIn("🐙 GTalksTech/netops-toolkit", result)
+        self.assertIn("Network operations toolkit", result)
+        self.assertIn("Python", result)
+        self.assertIn("⭐ 42", result)
+        self.assertIn(content, result)
+
+    def test_enrich_with_github_metadata_blob_url(self):
+        """Test enrichment with /blob/ deep link."""
+        mock_info = {
+            "full_name": "owner/repo",
+            "description": "Test repo",
+            "stargazers_count": 10,
+            "language": "JavaScript",
+        }
+        mock_get_info = Mock(return_value=mock_info)
+        
+        content = "https://github.com/owner/repo/blob/main/README.md"
+        result = enrich_with_github_metadata(content, mock_get_info)
+        
+        self.assertIn("🐙 owner/repo", result)
+        self.assertIn("Test repo", result)
+        mock_get_info.assert_called_once_with("owner", "repo")
+
+    def test_enrich_with_github_metadata_git_suffix(self):
+        """Test enrichment strips .git suffix."""
+        mock_info = {
+            "full_name": "owner/repo",
+            "description": "Test",
+            "stargazers_count": 5,
+            "language": "Ruby",
+        }
+        mock_get_info = Mock(return_value=mock_info)
+        
+        content = "https://github.com/owner/repo.git"
+        result = enrich_with_github_metadata(content, mock_get_info)
+        
+        self.assertIn("🐙 owner/repo", result)
+        mock_get_info.assert_called_once_with("owner", "repo")
+
+    def test_enrich_with_github_metadata_api_failure(self):
+        """Test enrichment handles API failure gracefully."""
+        mock_get_info = Mock(return_value=None)
+        
+        content = "#github https://github.com/owner/repo"
+        result = enrich_with_github_metadata(content, mock_get_info)
+        
+        self.assertEqual(result, content)
+
+    def test_enrich_with_github_metadata_no_url(self):
+        """Test enrichment with no GitHub URL in content."""
+        mock_get_info = Mock()
+        
+        content = "#inbox Just a regular message"
+        result = enrich_with_github_metadata(content, mock_get_info)
+        
+        self.assertEqual(result, content)
+        mock_get_info.assert_not_called()
 
 
 class TestTwitterEnrichment(unittest.TestCase):
