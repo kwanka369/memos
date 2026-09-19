@@ -1,6 +1,7 @@
-import { BookmarkIcon, MessageCircleIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, BookmarkIcon, MessageCircleIcon, TrashIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import RelativeTime from "@/components/RelativeTime";
 import { buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -13,6 +14,7 @@ import type { User } from "@/types/proto/api/v1/user_service_pb";
 import { useTranslate } from "@/utils/i18n";
 import { getVisibilityOption } from "@/utils/memo";
 import MemoActionMenu from "../../MemoActionMenu";
+import { useMemoActionHandlers } from "../../MemoActionMenu/hooks";
 import { ReactionSelector } from "../../MemoReactionListView";
 import UserAvatar from "../../UserAvatar";
 import VisibilityIcon from "../../VisibilityIcon";
@@ -28,6 +30,7 @@ const MEMO_HEADER_ACTION_CLASSES = cn(buttonVariants({ variant: "quiet", size: "
 const MemoHeader: React.FC<MemoHeaderProps> = ({ timeDisplay = "relative", showCreator, showVisibility, showPinned, showSpace }) => {
   const t = useTranslate();
   const [reactionSelectorOpen, setReactionSelectorOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const { memo, creator, currentUser, parentPage, isArchived, readonly, openEditor, openCommentEditor } = useMemoViewContext();
   const { createTime, updateTime, displayTime: memoDisplayTime, isDisplayingUpdatedTime, relativeTimeFormat } = useMemoViewDerived();
@@ -40,6 +43,13 @@ const MemoHeader: React.FC<MemoHeaderProps> = ({ timeDisplay = "relative", showC
   }, [memo.name, parentPage, navigateTo]);
 
   const { unpinMemo } = useMemoActions(memo);
+
+  const { handleToggleMemoStatusClick, handleDeleteMemoClick, confirmDeleteMemo } = useMemoActionHandlers({
+    memo,
+    parentPage,
+    onEdit: openEditor,
+    setDeleteDialogOpen,
+  });
 
   const timeValue = isArchived ? (
     memoDisplayTime?.toLocaleString(i18n.language)
@@ -143,8 +153,45 @@ const MemoHeader: React.FC<MemoHeaderProps> = ({ timeDisplay = "relative", showC
           </Tooltip>
         )}
 
+        {currentUser && !readonly && !memo.parent && (
+          <Tooltip>
+            <TooltipTrigger
+              aria-label={isArchived ? t("common.restore") : t("common.archive")}
+              className={MEMO_HEADER_ACTION_CLASSES}
+              onClick={handleToggleMemoStatusClick}
+            >
+              {isArchived ? (
+                <ArchiveRestoreIcon className="size-4" strokeWidth={1.8} />
+              ) : (
+                <ArchiveIcon className="size-4" strokeWidth={1.8} />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>{isArchived ? t("common.restore") : t("common.archive")}</TooltipContent>
+          </Tooltip>
+        )}
+
+        {currentUser && !readonly && (
+          <Tooltip>
+            <TooltipTrigger aria-label={t("common.delete")} className={MEMO_HEADER_ACTION_CLASSES} onClick={handleDeleteMemoClick}>
+              <TrashIcon className="size-4" strokeWidth={1.8} />
+            </TooltipTrigger>
+            <TooltipContent>{t("common.delete")}</TooltipContent>
+          </Tooltip>
+        )}
+
         <MemoActionMenu memo={memo} parentPage={parentPage} readonly={readonly} onEdit={openEditor} />
       </div>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title={t("memo.delete-confirm")}
+        confirmLabel={t("common.delete")}
+        description={t("memo.delete-confirm-description")}
+        cancelLabel={t("common.cancel")}
+        onConfirm={confirmDeleteMemo}
+        confirmVariant="destructive"
+      />
     </div>
   );
 };
