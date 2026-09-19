@@ -13,8 +13,8 @@ import { Visibility } from "@/types/proto/api/v1/memo_service_pb";
 import type { User } from "@/types/proto/api/v1/user_service_pb";
 import { useTranslate } from "@/utils/i18n";
 import { getVisibilityOption } from "@/utils/memo";
-import { useMemoActionHandlers } from "../../MemoActionMenu/hooks";
 import MemoActionMenu from "../../MemoActionMenu";
+import { useMemoActionHandlers } from "../../MemoActionMenu/hooks";
 import { ReactionSelector } from "../../MemoReactionListView";
 import UserAvatar from "../../UserAvatar";
 import VisibilityIcon from "../../VisibilityIcon";
@@ -172,11 +172,7 @@ const MemoHeader: React.FC<MemoHeaderProps> = ({ timeDisplay = "relative", showC
 
         {currentUser && !readonly && (
           <Tooltip>
-            <TooltipTrigger
-              aria-label={t("common.delete")}
-              className={MEMO_HEADER_ACTION_CLASSES}
-              onClick={handleDeleteMemoClick}
-            >
+            <TooltipTrigger aria-label={t("common.delete")} className={MEMO_HEADER_ACTION_CLASSES} onClick={handleDeleteMemoClick}>
               <TrashIcon className="size-4" strokeWidth={1.8} />
             </TooltipTrigger>
             <TooltipContent>{t("common.delete")}</TooltipContent>
