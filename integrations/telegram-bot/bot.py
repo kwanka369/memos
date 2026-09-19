@@ -170,7 +170,7 @@ def enrich_with_youtube_metadata(content: str) -> str:
 
 
 GITHUB_REPO_URL_RE = re.compile(
-    r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git|/)?(?:\s|$)"
+    r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?:/|\s|$)"
 )
 
 
@@ -194,6 +194,7 @@ def enrich_with_github_metadata(content: str) -> str:
     if not match:
         return content
     owner, repo = match.group(1), match.group(2)
+    repo = repo.rstrip(".git")
     info = get_github_repo_info(owner, repo)
     if not info:
         return content
