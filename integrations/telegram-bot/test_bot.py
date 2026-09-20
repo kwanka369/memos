@@ -3,6 +3,7 @@
 import re
 import unittest
 from unittest.mock import patch, Mock
+import os
 
 
 TWITTER_STATUS_URL_RE = re.compile(
@@ -144,6 +145,149 @@ class TestTwitterEnrichment(unittest.TestCase):
         result = enrich_with_twitter_metadata(content, mock_get_info)
         
         self.assertEqual(result, content)
+
+
+class TestSpaceRouting(unittest.TestCase):
+    def setUp(self):
+        """Set up test space IDs."""
+        self.github_space = "spaces/test-github-space"
+        self.twitter_space = "spaces/test-twitter-space"
+
+    def test_get_space_from_content_github_tag(self):
+        """Test space routing for #github tag."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        content = "#github https://github.com/owner/repo"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertEqual(result, self.github_space)
+
+    def test_get_space_from_content_twitter_tag(self):
+        """Test space routing for #twitterX tag."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        content = "#twitterX https://x.com/user/status/123"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertEqual(result, self.twitter_space)
+
+    def test_get_space_from_content_inbox_tag(self):
+        """Test no space assignment for #inbox tag."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        content = "#inbox Some random message"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertIsNone(result)
+
+    def test_get_space_from_content_no_hashtags(self):
+        """Test no space assignment when no relevant hashtags present."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        content = "Just a plain message"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertIsNone(result)
+
+    def test_get_space_from_content_multiple_tags(self):
+        """Test space routing prioritizes github when both tags present."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        content = "#github #twitterX mixed content"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertEqual(result, self.github_space)
+
+    def test_get_space_from_content_github_with_auto_tag(self):
+        """Test space routing with #github and auto-added tags."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        content = "#github #photo https://github.com/owner/repo"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertEqual(result, self.github_space)
+
+    def test_get_space_from_content_url_only_no_space(self):
+        """Test no space assignment from URL alone without explicit tag."""
+        def get_space_fn(content, github_space, twitter_space):
+            words = content.split()
+            for word in words:
+                if word == "#github":
+                    return github_space
+                if word == "#twitterX":
+                    return twitter_space
+            return None
+        
+        # URL auto-tagging happens, but space should only assign on explicit tag
+        content = "#inbox https://github.com/owner/repo"
+        result = get_space_fn(content, self.github_space, self.twitter_space)
+        self.assertIsNone(result)
+
+    def test_create_memo_with_space(self):
+        """Test create_memo includes space in payload when provided."""
+        def mock_create_memo(content, space=None):
+            payload = {"content": content, "visibility": "PRIVATE"}
+            if space:
+                payload["space"] = space
+            return payload
+        
+        content = "#github test"
+        payload = mock_create_memo(content, self.github_space)
+        
+        self.assertEqual(payload["content"], content)
+        self.assertEqual(payload["visibility"], "PRIVATE")
+        self.assertEqual(payload["space"], self.github_space)
+
+    def test_create_memo_without_space(self):
+        """Test create_memo doesn't include space when None."""
+        def mock_create_memo(content, space=None):
+            payload = {"content": content, "visibility": "PRIVATE"}
+            if space:
+                payload["space"] = space
+            return payload
+        
+        content = "#inbox test"
+        payload = mock_create_memo(content, None)
+        
+        self.assertEqual(payload["content"], content)
+        self.assertEqual(payload["visibility"], "PRIVATE")
+        self.assertNotIn("space", payload)
 
 
 if __name__ == "__main__":

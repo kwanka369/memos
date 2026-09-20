@@ -42,6 +42,21 @@ creates a memo:
 ```
 which renders as clickable checkboxes in Memos.
 
+## Space assignment
+
+Memos created with `#github` or `#twitterX` tags are automatically assigned
+to the corresponding Memos Space:
+
+- `#github` → assigns to the GitHub space (default: `spaces/4fe7faa5-3249-4306-b54a-e96fce67b485`)
+- `#twitterX` → assigns to the TwitterX space (default: `spaces/a4de3105-2b42-4865-9298-cf61228250ea`)
+
+Space assignment only happens when the **explicit hashtag** appears in the
+content. It does **not** trigger from URL patterns alone, and respects
+prefix routing (e.g., `!inbox https://github.com/...` stays in inbox, no
+space assigned). Other tags like `#inbox`, `#link`, `#photo` do not assign
+a space. Configure space IDs via `MEMOS_GITHUB_SPACE` and
+`MEMOS_TWITTER_SPACE` environment variables.
+
 ## Rich link enrichment
 
 - **YouTube** links (`youtube.com/watch`, `youtu.be`, `.../shorts/...`) are
@@ -126,6 +141,10 @@ The mapping of Telegram `message_id` -> Memos memo/comment name is kept in
      (Settings → My Account → Access Tokens)
    - `GEMINI_API_KEY` — optional, only needed for `!txt` voice transcription
      (get one at [aistudio.google.com](https://aistudio.google.com/apikey))
+   - `MEMOS_GITHUB_SPACE` — optional, Space ID for `#github` memos
+     (default: `spaces/4fe7faa5-3249-4306-b54a-e96fce67b485`)
+   - `MEMOS_TWITTER_SPACE` — optional, Space ID for `#twitterX` memos
+     (default: `spaces/a4de3105-2b42-4865-9298-cf61228250ea`)
 
 2. Install dependencies:
    ```bash
