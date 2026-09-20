@@ -51,6 +51,8 @@ MEMOS_URL = os.environ.get("MEMOS_URL", "http://localhost:5230").rstrip("/")
 MEMOS_TOKEN = os.environ["MEMOS_TOKEN"]
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_TRANSCRIBE_MODEL = os.environ.get("GEMINI_TRANSCRIBE_MODEL", "gemini-3.6-flash")
+MEMOS_GITHUB_SPACE = os.environ.get("MEMOS_GITHUB_SPACE", "spaces/4fe7faa5-3249-4306-b54a-e96fce67b485")
+MEMOS_TWITTER_SPACE = os.environ.get("MEMOS_TWITTER_SPACE", "spaces/a4de3105-2b42-4865-9298-cf61228250ea")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
@@ -107,6 +109,22 @@ def build_memo_content(text: str) -> str:
         if pattern.search(stripped):
             return f"#{tag} {stripped}".strip()
     return f"#inbox {stripped}".strip()
+
+
+def get_space_from_content(content: str) -> str | None:
+    """Parse hashtags from content and return the appropriate space.
+    
+    Returns the github space if #github is found, twitter space if #twitterX
+    is found, or None otherwise. Only considers hashtags, not URL patterns or
+    !prefix routing - respects explicit routing like !inbox.
+    """
+    words = content.split()
+    for word in words:
+        if word == "#github":
+            return MEMOS_GITHUB_SPACE
+        if word == "#twitterX":
+            return MEMOS_TWITTER_SPACE
+    return None
 
 
 def load_offset() -> int:
@@ -329,14 +347,17 @@ def transcribe_with_gemini(data: bytes, mime_type: str) -> str | None:
         return None
 
 
-def create_memo(content: str) -> str:
+def create_memo(content: str, space: str | None = None) -> str:
+    payload = {"content": content, "visibility": "PRIVATE"}
+    if space:
+        payload["space"] = space
     resp = requests.post(
         f"{MEMOS_URL}/api/v1/memos",
         headers={
             "Authorization": f"Bearer {MEMOS_TOKEN}",
             "Content-Type": "application/json",
         },
-        json={"content": content, "visibility": "PRIVATE"},
+        json=payload,
         timeout=10,
     )
     resp.raise_for_status()
@@ -520,8 +541,11 @@ def handle_update(update: dict, message_map: dict) -> None:
         content = enrich_with_twitter_metadata(content)
         if transcript:
             content = f"{content}\n\n📝 {transcript}"
-        memo_name = create_memo(content)
+        space = get_space_from_content(content)
+        memo_name = create_memo(content, space)
         print(f"Saved memo: {content!r}")
+        if space:
+            print(f"Assigned to space: {space}")
 
     message_map[str(message["message_id"])] = memo_name
     save_message_map(message_map)
