@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Basic unit tests for bot.py enrichment functions."""
 import re
+import os
 import unittest
 from unittest.mock import patch, Mock
+
+with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "test", "MEMOS_TOKEN": "test"}):
+    import bot
 
 
 TWITTER_STATUS_URL_RE = re.compile(
@@ -144,6 +148,57 @@ class TestTwitterEnrichment(unittest.TestCase):
         result = enrich_with_twitter_metadata(content, mock_get_info)
         
         self.assertEqual(result, content)
+
+
+class TestMemoAnalysis(unittest.TestCase):
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_comment")
+    @patch.object(bot, "analyze_with_gemini")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    @patch.object(bot, "enrich_with_github_metadata", side_effect=lambda content: "repo details\n" + content)
+    def test_github_analysis_comments_on_enriched_memo(self, enrich, create_memo, analyze, create_comment, save_map):
+        analyze.return_value = "🔎 Santrauka\n💡 Nauda\ntool · try"
+        message_map = {}
+        bot.handle_update({"message": {"message_id": 1, "text": "!github https://github.com/a/b"}}, message_map)
+        create_memo.assert_called_once_with("repo details\n#github https://github.com/a/b", bot.MEMOS_GITHUB_SPACE)
+        analyze.assert_called_once_with("repo details\n#github https://github.com/a/b")
+        create_comment.assert_called_once_with("memos/123", analyze.return_value)
+        self.assertEqual(message_map, {"1": "memos/123"})
+
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_comment")
+    @patch.object(bot, "analyze_with_gemini")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    def test_twitter_and_inbox_routing(self, create_memo, analyze, create_comment, save_map):
+        analyze.return_value = None
+        bot.handle_update({"message": {"message_id": 2, "text": "!twitterx post"}}, {})
+        analyze.assert_called_once_with("#twitterX post")
+        create_comment.assert_not_called()
+        analyze.reset_mock()
+        bot.handle_update({"message": {"message_id": 3, "text": "ordinary note"}}, {})
+        analyze.assert_not_called()
+
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_comment", side_effect=bot.requests.RequestException("API unavailable"))
+    @patch.object(bot, "analyze_with_gemini", return_value="🔎 Santrauka\n💡 Nauda\nthread · read")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    def test_comment_failure_keeps_memo(self, create_memo, analyze, create_comment, save_map):
+        message_map = {}
+        bot.handle_update({"message": {"message_id": 4, "text": "!twitterx post"}}, message_map)
+        self.assertEqual(message_map, {"4": "memos/123"})
+        create_comment.assert_called_once_with("memos/123", analyze.return_value)
+
+    @patch.object(bot, "GEMINI_API_KEY", "test")
+    @patch.object(bot.requests, "post")
+    def test_gemini_response_and_failure(self, post):
+        post.return_value.json.return_value = {"candidates": [{"content": {"parts": [{"text": (
+            '{"summary":"Repo santrauka","why_useful":"Naudingas darbui.","type":"tool","action":"try"}'
+        )}]}}]}
+        self.assertEqual(bot.analyze_with_gemini("#github repo"), "🔎 Repo santrauka\n💡 Naudingas darbui.\ntool · try")
+        post.return_value.json.return_value = {"candidates": [{"content": {"parts": [{"text": "bad json"}]}}]}
+        self.assertIsNone(bot.analyze_with_gemini("#github repo"))
+        post.side_effect = bot.requests.RequestException("Gemini unavailable")
+        self.assertIsNone(bot.analyze_with_gemini("#github repo"))
 
 
 if __name__ == "__main__":

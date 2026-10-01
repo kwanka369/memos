@@ -53,6 +53,18 @@ which renders as clickable checkboxes in Memos.
   public GitHub API (no token needed, subject to GitHub's unauthenticated
   rate limits). Prepended as `🐙 <owner>/<repo> — <description> (<lang> · ⭐ N)`.
 
+New `#github` and `#twitterX` memos are also analyzed by Gemini after link
+enrichment. The analysis is saved as a comment, without changing the memo:
+
+```
+🔎 <summary in Lithuanian>
+💡 <why useful in Lithuanian>
+<type> · <action>
+```
+
+If Gemini or the comment API fails, the memo is still saved and the error is
+logged. Other tags are not analyzed.
+
 ## Files, photos, voice notes
 
 Any attached file (photo, document, voice message, audio, video note) is
@@ -124,7 +136,8 @@ The mapping of Telegram `message_id` -> Memos memo/comment name is kept in
    - `MEMOS_URL` — your Memos instance URL (default `http://localhost:5230`)
    - `MEMOS_TOKEN` — a Personal Access Token from Memos
      (Settings → My Account → Access Tokens)
-   - `GEMINI_API_KEY` — optional, only needed for `!txt` voice transcription
+   - `GEMINI_API_KEY` — optional, used for `!txt` voice transcription and
+     `#github` / `#twitterX` memo analysis
      (get one at [aistudio.google.com](https://aistudio.google.com/apikey))
 
 2. Install dependencies:

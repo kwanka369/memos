@@ -51,6 +51,12 @@ MEMOS_URL = os.environ.get("MEMOS_URL", "http://localhost:5230").rstrip("/")
 MEMOS_TOKEN = os.environ["MEMOS_TOKEN"]
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_TRANSCRIBE_MODEL = os.environ.get("GEMINI_TRANSCRIBE_MODEL", "gemini-3.6-flash")
+MEMOS_GITHUB_SPACE = os.environ.get(
+    "MEMOS_GITHUB_SPACE", "spaces/4fe7faa5-3249-4306-b54a-e96fce67b485"
+)
+MEMOS_TWITTER_SPACE = os.environ.get(
+    "MEMOS_TWITTER_SPACE", "spaces/a4de3105-2b42-4865-9298-cf61228250ea"
+)
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
@@ -170,7 +176,8 @@ def enrich_with_youtube_metadata(content: str) -> str:
 
 
 GITHUB_REPO_URL_RE = re.compile(
-    r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git|/)?(?:\s|$)"
+    # owner/repo even with /tree/, /blob/, etc. after the repo name
+    r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?=/|\s|$)"
 )
 
 
@@ -193,7 +200,7 @@ def enrich_with_github_metadata(content: str) -> str:
     match = GITHUB_REPO_URL_RE.search(content)
     if not match:
         return content
-    owner, repo = match.group(1), match.group(2)
+    owner, repo = match.group(1), match.group(2).removesuffix(".git")
     info = get_github_repo_info(owner, repo)
     if not info:
         return content
@@ -329,14 +336,69 @@ def transcribe_with_gemini(data: bytes, mime_type: str) -> str | None:
         return None
 
 
-def create_memo(content: str) -> str:
+def analyze_with_gemini(content: str) -> str | None:
+    if not GEMINI_API_KEY:
+        print("Gemini analysis skipped: GEMINI_API_KEY is not configured")
+        return None
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TRANSCRIBE_MODEL}:generateContent",
+            params={"key": GEMINI_API_KEY},
+            json={
+                "contents": [{"parts": [{"text": (
+                    "Analyze the following GitHub repository or X post based only on the provided memo. "
+                    "Return a JSON object with summary (1-2 sentences in Lithuanian describing it), "
+                    "why_useful (one sentence in Lithuanian about its potential usefulness), "
+                    "type (tool, library, article, thread, demo, or other), and "
+                    "action (try, read, or just_info).\n\nMemo:\n" + content
+                )}]}],
+                "generationConfig": {"responseMimeType": "application/json"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        parts = resp.json()["candidates"][0]["content"]["parts"]
+        analysis = json.loads("".join(part["text"] for part in parts))
+        summary = analysis["summary"]
+        why_useful = analysis["why_useful"]
+        category = analysis["type"]
+        action = analysis["action"]
+        if (not all(isinstance(value, str) and value.strip() for value in (summary, why_useful))
+                or category not in {"tool", "library", "article", "thread", "demo", "other"}
+                or action not in {"try", "read", "just_info"}):
+            raise ValueError("Invalid Gemini analysis fields")
+        return f"🔎 {summary.strip()}\n💡 {why_useful.strip()}\n{category} · {action}"
+    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as exc:
+        print(f"Gemini analysis failed: {exc}")
+        return None
+
+
+
+def get_space_from_content(content: str) -> str | None:
+    """Return Github/TwitterX space when those hashtags are present.
+
+    Only looks at explicit hashtags in the final content (after !prefix /
+    URL auto-tagging). URL alone with #inbox does not assign a space.
+    """
+    for word in content.split():
+        if word == "#github":
+            return MEMOS_GITHUB_SPACE
+        if word == "#twitterX":
+            return MEMOS_TWITTER_SPACE
+    return None
+
+
+def create_memo(content: str, space: str | None = None) -> str:
+    payload = {"content": content, "visibility": "PRIVATE"}
+    if space:
+        payload["space"] = space
     resp = requests.post(
         f"{MEMOS_URL}/api/v1/memos",
         headers={
             "Authorization": f"Bearer {MEMOS_TOKEN}",
             "Content-Type": "application/json",
         },
-        json={"content": content, "visibility": "PRIVATE"},
+        json=payload,
         timeout=10,
     )
     resp.raise_for_status()
@@ -515,13 +577,17 @@ def handle_update(update: dict, message_map: dict) -> None:
     else:
         content = build_memo_content(text) if text else "#inbox (file)"
         content = add_auto_tag(content, auto_tag)
+        should_analyze = bool({"#github", "#twitterX"} & set(content.split()))
         content = enrich_with_youtube_metadata(content)
         content = enrich_with_github_metadata(content)
         content = enrich_with_twitter_metadata(content)
         if transcript:
             content = f"{content}\n\n📝 {transcript}"
-        memo_name = create_memo(content)
+        space = get_space_from_content(content)
+        memo_name = create_memo(content, space)
         print(f"Saved memo: {content!r}")
+        if space:
+            print(f"Assigned to space: {space}")
 
     message_map[str(message["message_id"])] = memo_name
     save_message_map(message_map)
@@ -533,6 +599,14 @@ def handle_update(update: dict, message_map: dict) -> None:
             print(f"Attached file {filename!r} ({len(file_data)} bytes) to {memo_name}")
         except requests.RequestException as exc:
             print(f"Failed to attach file {filename!r} to {memo_name}: {exc}")
+
+    if not parent_memo_name and should_analyze:
+        analysis = analyze_with_gemini(content)
+        if analysis:
+            try:
+                create_comment(memo_name, analysis)
+            except (requests.RequestException, KeyError, ValueError) as exc:
+                print(f"Failed to save Gemini analysis comment on {memo_name}: {exc}")
 
 
 def main() -> None:
