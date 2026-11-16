@@ -12,6 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMemoFilterContext } from "@/contexts/MemoFilterContext";
 import { useLocalStorage, useOverflowTitle } from "@/hooks";
+import { getTagFacet, toggleTagFilter } from "@/lib/tag-facets";
 import { cn } from "@/lib/utils";
 import { useTranslate } from "@/utils/i18n";
 import TagTree, { tagRowAriaLabel } from "../TagTree";
@@ -80,24 +81,25 @@ const FlatTagRow = ({ tag, amount, active, ariaLabel, onClick }: FlatTagRowProps
 
 const TagsSection = ({ tagCount, onSelect, scope }: Props) => {
   const t = useTranslate();
-  const { getFiltersByFactor, addFilter, removeFilter } = useMemoFilterContext();
+  const { filters, getFiltersByFactor, setFilters } = useMemoFilterContext();
   const [treeMode, setTreeMode] = useLocalStorage<boolean>("tag-view-as-tree", false);
   const activeTags = new Set(getFiltersByFactor("tagSearch").map((filter) => filter.value));
   const activeTag = activeTags.values().next().value as string | undefined;
   const tags = useMemo(() => Object.entries(tagCount).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])), [tagCount]);
+  const tagGroups = useMemo(
+    () =>
+      (["tema", "source", "busena", "other"] as const)
+        .map((facet) => ({ facet, tags: tags.filter(([tag]) => getTagFacet(tag) === facet) }))
+        .filter((group) => group.tags.length > 0),
+    [tags],
+  );
 
   if (tags.length === 0) {
     return null;
   }
 
   const handleTagClick = (tag: string) => {
-    const active = activeTags.has(tag);
-    if (active) {
-      removeFilter((filter) => filter.factor === "tagSearch" && filter.value === tag);
-    } else {
-      removeFilter((filter) => filter.factor === "tagSearch");
-      addFilter({ factor: "tagSearch", value: tag });
-    }
+    setFilters(toggleTagFilter(filters, tag));
     onSelect?.();
   };
 
@@ -138,15 +140,20 @@ const TagsSection = ({ tagCount, onSelect, scope }: Props) => {
         <TagTree key={scope} tagAmounts={tags} activeTag={activeTag} scope={scope} onTagClick={handleTagClick} />
       ) : (
         <>
-          {tags.map(([tag, amount]) => (
-            <FlatTagRow
-              key={tag}
-              tag={tag}
-              amount={amount}
-              active={activeTags.has(tag)}
-              ariaLabel={tagRowAriaLabel(t, tag, amount)}
-              onClick={() => handleTagClick(tag)}
-            />
+          {tagGroups.map(({ facet, tags: groupTags }) => (
+            <div key={facet} className="w-full">
+              <div className="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">{t(`common.tag-facet-${facet}`)}</div>
+              {groupTags.map(([tag, amount]) => (
+                <FlatTagRow
+                  key={tag}
+                  tag={tag}
+                  amount={amount}
+                  active={activeTags.has(tag)}
+                  ariaLabel={tagRowAriaLabel(t, tag, amount)}
+                  onClick={() => handleTagClick(tag)}
+                />
+              ))}
+            </div>
           ))}
         </>
       )}

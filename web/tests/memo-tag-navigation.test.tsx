@@ -19,9 +19,8 @@ vi.mock("@/contexts/MemoFilterContext", async (importOriginal) => {
   return {
     ...actual,
     useMemoFilterContext: () => ({
-      getFiltersByFactor: () => [],
-      removeFilter: vi.fn(),
-      addFilter: vi.fn(),
+      filters: [],
+      setFilters: vi.fn(),
     }),
   };
 });

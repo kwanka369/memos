@@ -29,6 +29,35 @@ it falls back to `#inbox`.
 Example: sending `!link https://example.com cool article` creates a memo
 with content `#link https://example.com cool article`.
 
+When `GEMINI_API_KEY` is configured, every new top-level memo also receives
+one subject tag (`#tema/...`), `#busena/nauja`, and a short Lithuanian
+summary. The approved topics are `ai-agentai`, `kurimo-irankiai`,
+`duomenys-dokumentai`, `infrastruktura`, `prekyba`, `dizainas`, `muzika`,
+`idejos`, and `kita`. Existing source tags such as `#github` and
+`#twitterX` remain. Classification runs only at creation, so a tag later
+corrected by hand is never overwritten by the bot. If Gemini is unavailable,
+the original memo is saved without the new topic metadata.
+When the primary Gemini model reaches its free quota, topic classification
+tries `gemini-3.5-flash-lite` before saving without metadata. Set
+`GEMINI_CLASSIFY_FALLBACK_MODEL` to use another available model.
+
+Change `#busena/nauja` to `#busena/aktuali`, `#busena/padaryta`, or
+`#busena/archyvas` as you review an item. On the Memos sidebar, topic,
+source, and status can be combined with text search; within the result, use
+the display settings to sort by creation or update time.
+
+For existing memos, run `python3 backfill_topics.py` on the host that runs
+Memos to preview how many records the configured token can see. To apply,
+run `python3 backfill_topics.py --apply --database /path/to/memos_prod.db
+--backup /path/to/memos-before-topics.db` (as one shell command). The script
+creates a consistent SQLite backup and a private JSON copy of original
+memo content before the first API update. It skips existing topic tags and
+concurrent edits. Classification uses groups of up to 10 memos to conserve
+Gemini requests. If the free daily quota is exhausted, run it again with a
+new backup path after the quota resets; already tagged memos are skipped.
+Check that the visible memo count matches the expected owner's collection
+before using `--apply`.
+
 Example: sending
 ```
 !task Paskambinti daktarui

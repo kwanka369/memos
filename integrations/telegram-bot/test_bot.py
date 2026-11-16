@@ -150,7 +150,39 @@ class TestTwitterEnrichment(unittest.TestCase):
         self.assertEqual(result, content)
 
 
+class TestTopicClassification(unittest.TestCase):
+    @patch.object(bot, "GEMINI_API_KEY", "test")
+    @patch.object(bot.requests, "post")
+    def test_accepts_only_approved_topics(self, post):
+        post.return_value.json.return_value = {"candidates": [{"content": {"parts": [{"text": (
+            '{"topic":"ai-agentai","summary":"Naudingas agentų įrankis."}'
+        )}]}}]}
+        self.assertEqual(bot.classify_with_gemini("#github example"), ("ai-agentai", "Naudingas agentų įrankis."))
+        post.return_value.json.return_value = {"candidates": [{"content": {"parts": [{"text": (
+            '{"topic":"nepatvirtinta","summary":"Santrauka."}'
+        )}]}}]}
+        self.assertIsNone(bot.classify_with_gemini("example"))
+
+    @patch.object(bot, "GEMINI_API_KEY", "test")
+    @patch.object(bot.requests, "post")
+    def test_uses_fallback_model_after_daily_quota(self, post):
+        exhausted = Mock(status_code=429, ok=False)
+        classified = Mock(status_code=200, ok=True)
+        classified.json.return_value = {"candidates": [{"content": {"parts": [{"text": (
+            '{"topic":"muzika","summary":"Muzikos radinys."}'
+        )}]}}]}
+        post.side_effect = [exhausted, classified]
+        self.assertEqual(bot.classify_with_gemini("#music song"), ("muzika", "Muzikos radinys."))
+        self.assertIn(bot.GEMINI_TRANSCRIBE_MODEL, post.call_args_list[0].args[0])
+        self.assertIn(bot.GEMINI_CLASSIFY_FALLBACK_MODEL, post.call_args_list[1].args[0])
+
+
 class TestMemoAnalysis(unittest.TestCase):
+    def setUp(self):
+        classifier_patcher = patch.object(bot, "classify_with_gemini", return_value=None)
+        self.classifier = classifier_patcher.start()
+        self.addCleanup(classifier_patcher.stop)
+
     @patch.object(bot, "save_message_map")
     @patch.object(bot, "create_comment")
     @patch.object(bot, "analyze_with_gemini")
@@ -177,6 +209,24 @@ class TestMemoAnalysis(unittest.TestCase):
         analyze.reset_mock()
         bot.handle_update({"message": {"message_id": 3, "text": "ordinary note"}}, {})
         analyze.assert_not_called()
+
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    def test_new_memo_keeps_source_and_adds_topic_and_status(self, create_memo, save_map):
+        self.classifier.return_value = ("muzika", "Įdomi daina.")
+        bot.handle_update({"message": {"message_id": 5, "text": "!music Originali žinutė"}}, {})
+        content, space = create_memo.call_args.args
+        self.assertEqual(space, None)
+        self.assertIn("#tema/muzika #busena/nauja", content)
+        self.assertIn("📝 Įdomi daina.", content)
+        self.assertIn("#music Originali žinutė", content)
+
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    def test_manual_topic_is_not_reclassified(self, create_memo, save_map):
+        bot.handle_update({"message": {"message_id": 6, "text": "#tema/idejos Mano idėja"}}, {})
+        self.classifier.assert_not_called()
+        self.assertIn("#tema/idejos", create_memo.call_args.args[0])
 
     @patch.object(bot, "save_message_map")
     @patch.object(bot, "create_comment", side_effect=bot.requests.RequestException("API unavailable"))

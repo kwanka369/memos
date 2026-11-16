@@ -1,11 +1,12 @@
 import type { Element } from "hast";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { type MemoFilter, stringifyFilters, useMemoFilterContext } from "@/contexts/MemoFilterContext";
+import { stringifyFilters, useMemoFilterContext } from "@/contexts/MemoFilterContext";
 import useNavigateTo from "@/hooks/useNavigateTo";
 import { colorToHex } from "@/lib/color";
 import { tagStyles } from "@/lib/markdownStyles";
 import { findTagMetadata } from "@/lib/tag";
+import { toggleTagFilter } from "@/lib/tag-facets";
 import { cn } from "@/lib/utils";
 import { Routes } from "@/router";
 import { useMemoViewContext } from "../MemoView/MemoViewContext";
@@ -21,7 +22,7 @@ export const Tag: React.FC<TagProps> = ({ "data-tag": dataTag, children, classNa
   const { parentPage } = useMemoViewContext();
   const location = useLocation();
   const navigateTo = useNavigateTo();
-  const { getFiltersByFactor, removeFilter, addFilter } = useMemoFilterContext();
+  const { filters, setFilters } = useMemoFilterContext();
   const { userTagsSetting } = useAuth();
 
   const tag = dataTag || "";
@@ -45,21 +46,11 @@ export const Tag: React.FC<TagProps> = ({ "data-tag": dataTag, children, classNa
 
     // If the tag is clicked in a memo detail page, we should navigate to the memo list page.
     if (isMemoResourcePath(location.pathname)) {
-      navigateTo(withMemoFilter(parentPage || Routes.HOME, stringifyFilters([{ factor: "tagSearch", value: tag }])));
+      navigateTo(withMemoFilter(parentPage || Routes.HOME, stringifyFilters(toggleTagFilter(filters, tag))));
       return;
     }
 
-    const isActive = getFiltersByFactor("tagSearch").some((filter: MemoFilter) => filter.value === tag);
-    if (isActive) {
-      removeFilter((f: MemoFilter) => f.factor === "tagSearch" && f.value === tag);
-    } else {
-      // Remove all existing tag filters first, then add the new one
-      removeFilter((f: MemoFilter) => f.factor === "tagSearch");
-      addFilter({
-        factor: "tagSearch",
-        value: tag,
-      });
-    }
+    setFilters(toggleTagFilter(filters, tag));
   };
 
   return (
