@@ -71,6 +71,15 @@ creates a memo:
 ```
 which renders as clickable checkboxes in Memos.
 
+## Space assignment
+
+Memos with `#github` or `#twitterX` in their final content are assigned to
+the corresponding Memos Space. This also applies when the bot adds a source
+tag from a URL. For example, `!inbox https://github.com/owner/repo` stays
+outside those spaces because its final content has no `#github` tag. Set
+`MEMOS_GITHUB_SPACE` and `MEMOS_TWITTER_SPACE` to override the
+default Space IDs shown in `.env.example`.
+
 ## Rich link enrichment
 
 - **YouTube** links (`youtube.com/watch`, `youtu.be`, `.../shorts/...`) are
