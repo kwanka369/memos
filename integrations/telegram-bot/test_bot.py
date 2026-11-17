@@ -150,6 +150,25 @@ class TestTwitterEnrichment(unittest.TestCase):
         self.assertEqual(result, content)
 
 
+class TestGitHubEnrichment(unittest.TestCase):
+    @patch.object(bot, "get_github_repo_info")
+    def test_repository_urls_with_paths_and_git_suffix(self, get_repo_info):
+        get_repo_info.return_value = {"full_name": "owner/widget", "description": "A tool"}
+        urls = (
+            "https://github.com/owner/widget",
+            "https://github.com/owner/widget/tree/main/scripts",
+            "https://github.com/owner/widget/blob/main/README.md",
+            "https://github.com/owner/widget/issues/123",
+            "https://github.com/owner/widget.git",
+            "https://github.com/owner/widget.git/tree/main",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                get_repo_info.reset_mock()
+                self.assertIn("🐙 owner/widget", bot.enrich_with_github_metadata(url))
+                get_repo_info.assert_called_once_with("owner", "widget")
+
+
 class TestTopicClassification(unittest.TestCase):
     @patch.object(bot, "GEMINI_API_KEY", "test")
     @patch.object(bot.requests, "post")
