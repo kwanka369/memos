@@ -22,6 +22,14 @@ transcript is appended to the memo, alongside the original audio attachment.
 Photos, documents, voice notes, audio, and video notes are downloaded from
 Telegram and attached to the created memo via the Memos attachments API.
 
+A message that contains a URL is also saved to Karakeep when
+KARAKEEP_URL and KARAKEEP_API_KEY are set. Karakeep gets the link, the
+user's comment as the bookmark note, and a source tag (github, x,
+youtube, or the !prefix tag). The Memos entry stays short: the same link
+and comment, without the scraped title or Gemini analysis. If Karakeep is
+not configured, or the bookmark request fails, the memo is enriched as
+before.
+
 YouTube links are enriched with the video title and channel name (via the
 public oEmbed API), GitHub repo links are enriched with the repo
 description, primary language, and star count (via the public GitHub API),
@@ -62,6 +70,8 @@ MEMOS_GITHUB_SPACE = os.environ.get(
 MEMOS_TWITTER_SPACE = os.environ.get(
     "MEMOS_TWITTER_SPACE", "spaces/a4de3105-2b42-4865-9298-cf61228250ea"
 )
+KARAKEEP_URL = os.environ.get("KARAKEEP_URL", "").rstrip("/")
+KARAKEEP_API_KEY = os.environ.get("KARAKEEP_API_KEY", "")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 OFFSET_FILE = os.path.join(os.path.dirname(__file__), "offset.txt")
@@ -91,6 +101,14 @@ URL_AUTO_TAGS = (
     (re.compile(r"https?://(?:www\.)?(?:x|twitter)\.com/\S+", re.I), "twitterX"),
 )
 
+HTTP_URL_RE = re.compile(r"https?://[^\s<>()]+", re.I)
+# Karakeep source tags. Memos keeps #twitterX; Karakeep uses the shorter "x".
+KARAKEEP_SOURCE_TAGS = (
+    (re.compile(r"https?://(?:www\.)?(?:gist\.)?github\.com/", re.I), "github"),
+    (re.compile(r"https?://(?:[\w-]+\.)?(?:x|twitter)\.com/", re.I), "x"),
+    (re.compile(r"https?://(?:www\.)?(?:youtube\.com/|youtu\.be/)", re.I), "youtube"),
+)
+
 
 def build_memo_content(text: str) -> str:
     stripped = text.strip()
@@ -118,6 +136,102 @@ def build_memo_content(text: str) -> str:
         if pattern.search(stripped):
             return f"#{tag} {stripped}".strip()
     return f"#inbox {stripped}".strip()
+
+
+def extract_http_urls(text: str) -> list[str]:
+    """Return unique http(s) URLs, without trailing sentence punctuation."""
+    urls = []
+    for match in HTTP_URL_RE.finditer(text):
+        url = match.group(0).rstrip(".,;:!?)]")
+        if url and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def prefix_tag_of(text: str) -> str | None:
+    lowered = text.strip().lower()
+    for prefix, tag in PREFIX_TAGS.items():
+        if lowered.startswith(prefix.lower()):
+            return tag
+    return None
+
+
+def bookmark_note(text: str, urls: list[str]) -> str:
+    """User comment for a Karakeep bookmark: the message without the !prefix and URLs."""
+    note = text.strip()
+    lowered = note.lower()
+    for prefix in PREFIX_TAGS:
+        if lowered.startswith(prefix.lower()):
+            note = note[len(prefix):].strip()
+            break
+    for url in urls:
+        note = re.sub(re.escape(url) + r"[.,;:!?)]*", " ", note)
+    lines = [" ".join(line.split()) for line in note.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def karakeep_tags_for_url(url: str, prefix_tag: str | None) -> list[str]:
+    tags = []
+    for pattern, tag in KARAKEEP_SOURCE_TAGS:
+        if pattern.search(url):
+            tags.append(tag)
+            break
+    extra = "x" if prefix_tag == "twitterX" else prefix_tag
+    if extra and extra not in tags:
+        tags.append(extra)
+    return tags
+
+
+def create_karakeep_bookmark(url: str, note: str, tags: list[str]) -> bool:
+    """Create a link bookmark and attach source tags. Raises on HTTP errors."""
+    headers = {
+        "Authorization": f"Bearer {KARAKEEP_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload: dict = {"type": "link", "url": url}
+    if note:
+        payload["note"] = note
+    resp = requests.post(
+        f"{KARAKEEP_URL}/api/v1/bookmarks",
+        headers=headers,
+        json=payload,
+        timeout=20,
+    )
+    resp.raise_for_status()
+    bookmark_id = resp.json()["id"]
+    if tags:
+        tag_resp = requests.post(
+            f"{KARAKEEP_URL}/api/v1/bookmarks/{bookmark_id}/tags",
+            headers=headers,
+            json={"tags": [{"tagName": tag} for tag in tags]},
+            timeout=20,
+        )
+        tag_resp.raise_for_status()
+    print(f"Karakeep bookmark {bookmark_id} for {url} tags={tags}")
+    return True
+
+
+def archive_message_urls(text: str) -> bool:
+    """Save every URL in text to Karakeep.
+
+    Returns True only when Karakeep accepted all of them, so the caller can
+    keep the Memos entry short. A failed call is logged and does not raise.
+    """
+    if not KARAKEEP_URL or not KARAKEEP_API_KEY:
+        return False
+    urls = extract_http_urls(text)
+    if not urls:
+        return False
+    note = bookmark_note(text, urls)
+    prefix_tag = prefix_tag_of(text)
+    saved = 0
+    for url in urls:
+        try:
+            create_karakeep_bookmark(url, note, karakeep_tags_for_url(url, prefix_tag))
+            saved += 1
+        except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+            print(f"Karakeep bookmark failed for {url}: {exc}")
+    return saved == len(urls)
 
 
 def load_offset() -> int:
@@ -625,6 +739,11 @@ def handle_update(update: dict, message_map: dict) -> None:
         if transcript:
             print(f"Transcribed audio ({len(file_data)} bytes) -> {transcript!r}")
 
+    # A URL is archived in Karakeep. The Memos memo or comment still keeps
+    # the link and the user's own words. Enrichment stays only as a fallback
+    # when Karakeep did not accept every URL.
+    bookmarked = archive_message_urls(text)
+
     if parent_memo_name:
         # This message is a reply to a message we've already turned into a
         # memo -> file it as a comment on that memo instead of a new memo.
@@ -637,10 +756,11 @@ def handle_update(update: dict, message_map: dict) -> None:
     else:
         content = build_memo_content(text) if text else "#inbox (file)"
         content = add_auto_tag(content, auto_tag)
-        should_analyze = bool({"#github", "#twitterX"} & set(content.split()))
-        content = enrich_with_youtube_metadata(content)
-        content = enrich_with_github_metadata(content)
-        content = enrich_with_twitter_metadata(content)
+        should_analyze = bool({"#github", "#twitterX"} & set(content.split())) and not bookmarked
+        if not bookmarked:
+            content = enrich_with_youtube_metadata(content)
+            content = enrich_with_github_metadata(content)
+            content = enrich_with_twitter_metadata(content)
         if transcript:
             content = f"{content}\n\n📝 {transcript}"
         # An explicit topic is a manual decision; never replace it. A file

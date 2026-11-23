@@ -71,6 +71,24 @@ creates a memo:
 ```
 which renders as clickable checkboxes in Memos.
 
+## Links go to Karakeep
+
+When `KARAKEEP_URL` and `KARAKEEP_API_KEY` are both set, a message that
+contains an `http` or `https` URL is also saved as a Karakeep bookmark:
+
+- the URL becomes a link bookmark (`POST /api/v1/bookmarks`);
+- the rest of the message, without the `!prefix`, is the bookmark note;
+- a source tag is attached: `github`, `x`, or `youtube`, plus the tag from
+  an explicit prefix such as `!link` or `!music`.
+
+Memos still receives a short entry with that same link and comment. Replies
+stay comments on the original memo, and their URLs are bookmarked too.
+Notes without a URL stay in Memos only. If Karakeep is unset or the request
+fails, the bot keeps the previous YouTube, GitHub, and X enrichment.
+
+Create the key in Karakeep under Settings → API Keys. The instance used
+here is `http://192.168.0.38:3000`.
+
 ## Space assignment
 
 Memos with `#github` or `#twitterX` in their final content are assigned to
@@ -177,6 +195,8 @@ The mapping of Telegram `message_id` -> Memos memo/comment name is kept in
    - `GEMINI_API_KEY` — optional, used for `!txt` voice transcription and
      `#github` / `#twitterX` memo analysis
      (get one at [aistudio.google.com](https://aistudio.google.com/apikey))
+   - `KARAKEEP_URL` and `KARAKEEP_API_KEY` — optional; when both are set,
+     URLs are bookmarked in Karakeep and the Memos entry stays short
 
 2. Install dependencies:
    ```bash

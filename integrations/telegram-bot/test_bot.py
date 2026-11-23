@@ -150,6 +150,99 @@ class TestTwitterEnrichment(unittest.TestCase):
         self.assertEqual(result, content)
 
 
+class TestKarakeepRouting(unittest.TestCase):
+    def setUp(self):
+        classifier_patcher = patch.object(bot, "classify_with_gemini", return_value=None)
+        self.classifier = classifier_patcher.start()
+        self.addCleanup(classifier_patcher.stop)
+
+    def test_extracts_urls_and_comment(self):
+        text = "!github https://github.com/a/b. verta pabandyti"
+        urls = bot.extract_http_urls(text)
+        self.assertEqual(urls, ["https://github.com/a/b"])
+        self.assertEqual(bot.bookmark_note(text, urls), "verta pabandyti")
+        self.assertEqual(bot.karakeep_tags_for_url(urls[0], "github"), ["github"])
+
+    def test_source_tags(self):
+        self.assertEqual(bot.karakeep_tags_for_url("https://x.com/user/status/1", None), ["x"])
+        self.assertEqual(
+            bot.karakeep_tags_for_url("https://youtu.be/abc", "music"),
+            ["youtube", "music"],
+        )
+        self.assertEqual(
+            bot.karakeep_tags_for_url("https://example.com/a", "twitterX"),
+            ["x"],
+        )
+
+    @patch.object(bot, "KARAKEEP_URL", "http://karakeep.local")
+    @patch.object(bot, "KARAKEEP_API_KEY", "key")
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_comment")
+    @patch.object(bot, "analyze_with_gemini")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    @patch.object(bot, "enrich_with_github_metadata", side_effect=lambda content: "repo details\n" + content)
+    @patch.object(bot, "create_karakeep_bookmark", return_value=True)
+    def test_url_is_bookmarked_and_memo_stays_short(
+        self, create_bookmark, enrich, create_memo, analyze, create_comment, save_map
+    ):
+        bot.handle_update(
+            {"message": {"message_id": 9, "text": "!github https://github.com/a/b verta pabandyti"}},
+            {},
+        )
+        create_bookmark.assert_called_once_with(
+            "https://github.com/a/b", "verta pabandyti", ["github"]
+        )
+        content, space = create_memo.call_args.args
+        self.assertEqual(content, "#github https://github.com/a/b verta pabandyti")
+        self.assertEqual(space, bot.MEMOS_GITHUB_SPACE)
+        enrich.assert_not_called()
+        analyze.assert_not_called()
+        create_comment.assert_not_called()
+
+    @patch.object(bot, "KARAKEEP_URL", "http://karakeep.local")
+    @patch.object(bot, "KARAKEEP_API_KEY", "key")
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    @patch.object(bot, "create_karakeep_bookmark", return_value=True)
+    def test_note_without_url_stays_in_memos(self, create_bookmark, create_memo, save_map):
+        bot.handle_update({"message": {"message_id": 10, "text": "mintis be nuorodos"}}, {})
+        create_bookmark.assert_not_called()
+        self.assertIn("#inbox mintis be nuorodos", create_memo.call_args.args[0])
+
+    @patch.object(bot, "KARAKEEP_URL", "http://karakeep.local")
+    @patch.object(bot, "KARAKEEP_API_KEY", "key")
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "create_comment", return_value="memos/123/comments/1")
+    @patch.object(bot, "create_memo")
+    @patch.object(bot, "create_karakeep_bookmark", return_value=True)
+    def test_reply_with_url_stays_a_comment(self, create_bookmark, create_memo, create_comment, save_map):
+        bot.handle_update(
+            {"message": {
+                "message_id": 12,
+                "text": "žiūrėk https://example.com/a",
+                "reply_to_message": {"message_id": 7},
+            }},
+            {"7": "memos/parent"},
+        )
+        create_bookmark.assert_called_once_with("https://example.com/a", "žiūrėk", [])
+        create_comment.assert_called_once_with("memos/parent", "žiūrėk https://example.com/a")
+        create_memo.assert_not_called()
+
+    @patch.object(bot, "KARAKEEP_URL", "http://karakeep.local")
+    @patch.object(bot, "KARAKEEP_API_KEY", "key")
+    @patch.object(bot, "save_message_map")
+    @patch.object(bot, "analyze_with_gemini", return_value=None)
+    @patch.object(bot, "create_memo", return_value="memos/123")
+    @patch.object(bot, "enrich_with_github_metadata", side_effect=lambda content: "repo details\n" + content)
+    @patch.object(bot, "create_karakeep_bookmark", side_effect=bot.requests.RequestException("down"))
+    def test_karakeep_failure_keeps_memo_enrichment(
+        self, create_bookmark, enrich, create_memo, analyze, save_map
+    ):
+        bot.handle_update({"message": {"message_id": 11, "text": "!github https://github.com/a/b"}}, {})
+        create_bookmark.assert_called_once()
+        self.assertIn("repo details\n#github https://github.com/a/b", create_memo.call_args.args[0])
+
+
 class TestGitHubEnrichment(unittest.TestCase):
     @patch.object(bot, "get_github_repo_info")
     def test_repository_urls_with_paths_and_git_suffix(self, get_repo_info):
